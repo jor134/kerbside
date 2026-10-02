@@ -1,5 +1,5 @@
 // Kerbside service worker: caches the app shell only. Race data is always fetched fresh.
-const CACHE = 'kerbside-v3';
+const CACHE = 'kerbside-v5';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
   'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'];
 

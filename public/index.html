@@ -297,11 +297,21 @@ class Track {
   toLocal(x, y, z, out) { return out.set(x - this.cx, z - this.minz, -(y - this.cy)); }
   at(frac, out, tan) {
     frac = ((frac % 1) + 1) % 1;
-    const f = frac * this.N, i = Math.floor(f) % this.N, a = f - Math.floor(f);
-    const p0 = this.pts[i], p1 = this.pts[(i + 1) % this.N];
-    out.lerpVectors(p0, p1, a);
-    if (tan) tan.copy(this.tan[i]);
+    const f = frac * this.N, i = Math.floor(f) % this.N, a = f - Math.floor(f), j = (i + 1) % this.N;
+    out.lerpVectors(this.pts[i], this.pts[j], a);
+    if (tan) tan.lerpVectors(this.tan[i], this.tan[j], a).normalize();
     return i;
+  }
+  project(v, hint) { // distance along the lap and signed sideways offset (left = +)
+    const [i] = this.nearest(v, hint), N = this.N, seg = this.length / N;
+    let best = null;
+    for (const a of [(i - 1 + N) % N, i]) {
+      const p = this.pts[a], q = this.pts[(a + 1) % N], dx = q.x - p.x, dz = q.z - p.z, L2 = dx * dx + dz * dz || 1;
+      const f = Math.max(0, Math.min(1, ((v.x - p.x) * dx + (v.z - p.z) * dz) / L2));
+      const px = p.x + dx * f, pz = p.z + dz * f, d2 = (v.x - px) ** 2 + (v.z - pz) ** 2;
+      if (!best || d2 < best.d2) best = { d2, i: a, s: (a + f) * seg, lat: (v.x - px) * this.nrm[a].x + (v.z - pz) * this.nrm[a].z };
+    }
+    return best;
   }
   nearest(v, hint) {
     let best = -1, bd = Infinity;
@@ -477,7 +487,7 @@ function ensureCar(num, info) {
   num = String(num);
   let car = Cars.get(num);
   if (!car) {
-    car = { num, tla: num, color: '#9aa5ab', samples: [], idx: -1, head: 0, pos: new THREE.Vector3(), valid: false, estP: null, model: null, real: null, label: null };
+    car = { num, tla: num, color: '#9aa5ab', samples: [], ps: null, pIdx: 0, procDirty: true, idx: -1, head: 0, pos: new THREE.Vector3(), mpos: new THREE.Vector3(), valid: false, estP: null, model: null, real: null, label: null };
     Cars.set(num, car);
   }
   if (info) {
@@ -511,7 +521,7 @@ function pushSamples(car, list) {
   if (!s.length || list[0].t > s[s.length - 1].t) { for (const p of list) s.push(p); return; }
   const all = s.concat(list).sort((a, b) => a.t - b.t), out = [];
   for (const p of all) if (!out.length || p.t > out[out.length - 1].t) out.push(p);
-  car.samples = out;
+  car.samples = out; car.procDirty = true;
 }
 function samplePos(car, t, out) {
   const a = car.samples; if (!a.length) return false;
@@ -538,7 +548,7 @@ function setTrack(tr) {
   if (scenery) { modelGroup.remove(scenery.model); realWorld.remove(scenery.real); }
   scenery = buildScenery(tr);
   modelGroup.add(scenery.model); realWorld.add(onLayer(scenery.real, REAL));
-  for (const car of Cars.values()) { car.idx = -1; car.estP = null; }
+  for (const car of Cars.values()) { car.idx = -1; car.estP = null; car.procDirty = true; }
   layoutModel(); if (renderer.xr.isPresenting) positionPanels();
 }
 function rebuildModelTrack() {
@@ -546,6 +556,7 @@ function rebuildModelTrack() {
   const mode = App.view === 'trackside' ? 'real' : 'model';
   if (mode === modelTrackMode) return;
   modelTrackMode = mode;
+  App.latK = mode === 'real' ? 1 : Math.max(7, tr.extent * 0.0034) / 7;
   if (modelTrack) modelGroup.remove(modelTrack);
   if (slab) modelGroup.remove(slab);
   const hw = mode === 'real' ? 7 : Math.max(7, tr.extent * 0.0034);
@@ -764,7 +775,7 @@ const Replay = {
     // drop far-away data
     for (const c of [...this.loaded]) if (c < i - 2 || c > i + 6) this.loaded.delete(c);
     const lo = this.start + (i - 2) * this.CH, hi = this.start + (i + 7) * this.CH;
-    for (const car of Cars.values()) if (car.samples.length && (car.samples[0].t < lo || car.samples[car.samples.length - 1].t > hi)) car.samples = car.samples.filter(p => p.t >= lo && p.t < hi);
+    for (const car of Cars.values()) if (car.samples.length && (car.samples[0].t < lo || car.samples[car.samples.length - 1].t > hi)) { car.samples = car.samples.filter(p => p.t >= lo && p.t < hi); car.procDirty = true; }
   },
   tick(dt) {
     if (!this.sk || !this.start) return;
@@ -840,7 +851,7 @@ const Live = {
     Replay.gen++; Replay.sk = null; $('#transport').hidden = true; $('#delayPane').hidden = false;
     this.stop(); resetCars();
     App.source = 'live'; App.track = null; App.modeLabel = 'Live';
-    Object.assign(this, { wanted: true, state: {}, queue: [], offsets: [], offset: 0, lastPosRx: 0, lapStart: new Map(), circuitKey: null, mismatch: 0, trailNote: false });
+    Object.assign(this, { wanted: true, state: {}, queue: [], offsets: [], offset: 0, offsetTarget: null, lastTick: 0, lastPosRx: 0, lapStart: new Map(), circuitKey: null, mismatch: 0, trailNote: false });
     this.url = base.replace(/^http/, 'ws') + '/ws?key=' + encodeURIComponent(key);
     this.open();
   },
@@ -893,7 +904,8 @@ const Live = {
     if (!latest) return;
     for (const [num, list] of by) pushSamples(ensureCar(num), list);
     this.offsets.push(latest - Date.now()); if (this.offsets.length > 40) this.offsets.shift();
-    this.offset = Math.max(...this.offsets);
+    this.offsetTarget = Math.max(...this.offsets);
+    if (!this.offset || Math.abs(this.offsetTarget - this.offset) > 5000) this.offset = this.offsetTarget;
     this.lastPosRx = Date.now();
   },
   apply(topic, data) {
@@ -931,6 +943,8 @@ const Live = {
   isRace() { const si = this.state.SessionInfo || {}; return si.Type === 'Race'; },
   renderTime() { return Date.now() + this.offset - 2000 - this.delay * 1000; },
   tick() {
+    const nowMs = Date.now(), step = this.lastTick ? Math.min(200, nowMs - this.lastTick) : 0; this.lastTick = nowMs;
+    if (this.offsetTarget != null) { const d = this.offsetTarget - this.offset; this.offset += Math.max(-step * 0.05, Math.min(step * 0.05, d)); }
     const cutoff = Date.now() - this.delay * 1000;
     while (this.queue.length && this.queue[0].at <= cutoff) { const m = this.queue.shift(); this.apply(m.topic, m.data); }
     const gps = !App.forceEst && this.lastPosRx > 0 && Date.now() - this.lastPosRx < 20000;
@@ -944,7 +958,7 @@ const Live = {
     if (now - this.lastCheck > 5000) {
       this.lastCheck = now;
       const lo = this.renderTime() - 30000;
-      for (const c of Cars.values()) if (c.samples.length && c.samples[0].t < lo) { const i = lastLE(c.samples, lo, 't'); if (i > 0) c.samples.splice(0, i); }
+      for (const c of Cars.values()) if (c.samples.length && c.samples[0].t < lo) { const i = lastLE(c.samples, lo, 't'); if (i > 0) { c.samples.splice(0, i); c.procDirty = true; } }
       if (gps) this.checkTrack();
     }
   },
@@ -1036,13 +1050,91 @@ const Live = {
       car.estP += d * Math.min(1, dt * 2);
       const tan = new THREE.Vector3(), i = tr.at(car.estP, car.pos, tan);
       if (r.pit) car.pos.addScaledVector(tr.nrm[i], -(7 * 2.2));
-      car.head = Math.atan2(tan.x, tan.z); car.valid = true; car.idx = i;
+      car.head = Math.atan2(tan.x, tan.z); car.valid = true; car.idx = i; car.mpos.copy(car.pos);
     }
   }
 };
 
+/* ================= Smooth motion ================= */
+// Each raw GPS sample is projected onto the circuit: distance along the lap (s) and sideways offset (lat).
+// Distance is interpolated with a monotone cubic curve, so cars never stutter, reverse or cut corners.
+const vP = new THREE.Vector3(), vQ = new THREE.Vector3(), tanP = new THREE.Vector3();
+function procCar(car) {
+  const tr = App.track; if (!tr) return;
+  if (car.procDirty || !car.ps) { car.ps = []; car.pIdx = 0; car.pHint = -1; car.lastRaw = null; car.dup = null; car.procDirty = false; }
+  const raw = car.samples, L = tr.length;
+  const add = r => {
+    tr.toLocal(r.x, r.y, r.z, vP);
+    const pr = tr.project(vP, car.pHint); car.pHint = pr.i;
+    const prev = car.ps[car.ps.length - 1];
+    let s = pr.s, lat = pr.lat;
+    if (prev) {
+      let ds = s - (((prev.s % L) + L) % L); if (ds > L / 2) ds -= L; if (ds < -L / 2) ds += L;
+      s = prev.s + ds;
+      if (r.t - prev.t < 3000 && Math.abs(pr.lat - prev.rl) < 15) lat = prev.lat * 0.55 + pr.lat * 0.45;
+    }
+    car.ps.push({ t: r.t, s, lat, rl: pr.lat, x: r.x, y: r.y, z: r.z });
+  };
+  for (let k = car.pIdx; k < raw.length; k++) {
+    const r = raw[k], last = car.lastRaw;
+    if (last && r.x === last.x && r.y === last.y) { car.dup = r; continue; } // stale repeat from the feed
+    if (car.dup) { if (car.dup.t - last.t >= 1500) add(car.dup); car.dup = null; } // car was genuinely stopped
+    add(r); car.lastRaw = r;
+  }
+  car.pIdx = raw.length;
+}
+function pchipSlope(a, k) {
+  const has = j => j >= 0 && j < a.length && Math.abs(a[j].t - a[k].t) < 6000;
+  const sec = (i, j) => (a[j].s - a[i].s) / (a[j].t - a[i].t);
+  const hp = has(k - 1), hn = has(k + 1);
+  if (hp && hn) {
+    const h0 = a[k].t - a[k - 1].t, h1 = a[k + 1].t - a[k].t, d0 = sec(k - 1, k), d1 = sec(k, k + 1);
+    if (d0 * d1 <= 0) return 0;
+    const w1 = 2 * h1 + h0, w2 = h1 + 2 * h0;
+    return (w1 + w2) / (w1 / d0 + w2 / d1);
+  }
+  if (hn) return sec(k, k + 1);
+  if (hp) return sec(k - 1, k);
+  return 0;
+}
+function placeOnTrack(car, s, lat) {
+  const tr = App.track, i = tr.at(s / tr.length, vP, tanP);
+  car.pos.copy(vP).addScaledVector(tr.nrm[i], lat);
+  car.mpos.copy(vP).addScaledVector(tr.nrm[i], lat * (App.latK || 1));
+  car.pos.y = car.mpos.y = vP.y;
+  car.targetHead = Math.atan2(tanP.x, tanP.z);
+  car.idx = i;
+  return true;
+}
+function placeRaw(car, p, q, f) {
+  const tr = App.track;
+  tr.toLocal(p.x + (q.x - p.x) * f, p.y + (q.y - p.y) * f, p.z + (q.z - p.z) * f, vP);
+  const [i] = tr.nearest(vP, car.idx); car.idx = i; vP.y = tr.pts[i].y;
+  car.pos.copy(vP); car.mpos.copy(vP);
+  tr.toLocal(q.x, q.y, q.z, vQ);
+  if ((vQ.x - vP.x) ** 2 + (vQ.z - vP.z) ** 2 > 0.3) car.targetHead = Math.atan2(vQ.x - vP.x, vQ.z - vP.z);
+  return true;
+}
+function smoothPos(car, t) {
+  const a = car.ps; if (!a || !a.length) return false;
+  let i = lastLE(a, t, 't');
+  if (i < 0) { if (a[0].t - t > 1500) return false; i = 0; t = a[0].t; }
+  const p0 = a[i];
+  const hold = () => Math.abs(p0.rl) > 60 ? placeRaw(car, p0, p0, 0) : placeOnTrack(car, p0.s, p0.lat);
+  if (i === a.length - 1) {
+    const lastRaw = car.samples.length ? car.samples[car.samples.length - 1].t : 0;
+    return (t - p0.t < 3000 || lastRaw >= t - 3000) ? hold() : false;
+  }
+  const p1 = a[i + 1], h = p1.t - p0.t;
+  if (h > 6000) return t - p0.t < 3000 ? hold() : false;
+  const u = (t - p0.t) / h;
+  if (Math.abs(p0.rl) > 60 || Math.abs(p1.rl) > 60) return placeRaw(car, p0, p1, u); // garage or far off the circuit
+  const m0 = pchipSlope(a, i) * h, m1 = pchipSlope(a, i + 1) * h, u2 = u * u, u3 = u2 * u;
+  const s = (2 * u3 - 3 * u2 + 1) * p0.s + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * p1.s + (u3 - u2) * m1;
+  return placeOnTrack(car, s, p0.lat + (p1.lat - p0.lat) * u);
+}
+
 /* ================= Per-frame car update ================= */
-const tmpA = { x: 0, y: 0, z: 0 }, tmpB = { x: 0, y: 0, z: 0 }, vA = new THREE.Vector3(), vB = new THREE.Vector3();
 function updateCars(dt) {
   const tr = App.track;
   if (!tr) { for (const c of Cars.values()) { c.model.visible = c.real.visible = c.label.visible = false; } return; }
@@ -1052,29 +1144,21 @@ function updateCars(dt) {
   const trackside = App.view === 'trackside', L = modelCarLen();
   for (const car of Cars.values()) {
     if (!est) {
-      car.valid = samplePos(car, rt, tmpA);
-      if (car.valid) {
-        tr.toLocal(tmpA.x, tmpA.y, tmpA.z, vA);
-        if (samplePos(car, rt + 400, tmpB)) {
-          tr.toLocal(tmpB.x, tmpB.y, tmpB.z, vB);
-          const dx = vB.x - vA.x, dz = vB.z - vA.z;
-          if (dx * dx + dz * dz > 0.3) {
-            const h = Math.atan2(dx, dz); let d = h - car.head;
-            while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
-            car.head += d * Math.min(1, dt * 10);
-          }
-        }
-        const [i] = tr.nearest(vA, car.idx); car.idx = i;
-        vA.y = tr.pts[i].y; car.pos.copy(vA);
+      if (car.procDirty || car.pIdx < car.samples.length) procCar(car);
+      car.valid = smoothPos(car, rt);
+      if (car.valid && car.targetHead != null) {
+        let d = car.targetHead - car.head;
+        while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
+        car.head += d * Math.min(1, dt * 14);
       }
     }
     const v = car.valid;
     car.model.visible = car.real.visible = v;
     car.label.visible = v && !trackside;
     if (!v) continue;
-    car.model.position.copy(car.pos); car.model.rotation.y = car.head;
+    car.model.position.copy(car.mpos); car.model.rotation.y = car.head;
     car.real.position.copy(car.pos); car.real.rotation.y = car.head;
-    car.label.position.set(car.pos.x, car.pos.y + L * 1.05, car.pos.z);
+    car.label.position.set(car.mpos.x, car.mpos.y + L * 1.05, car.mpos.z);
   }
 }
 
@@ -1095,7 +1179,19 @@ function updateChaseCam(dt) {
 }
 function setChase(num) {
   App.chaseNum = num; chaseInit = false; $('#chaseSel').value = num; App.uiDirty = true;
+  if (renderer.xr.isPresenting) { drawXRPanel(); drawChaseLabel(); }
 }
+function cycleChase(dir) {
+  const list = App.board.filter(r => !r.out).map(r => r.num);
+  const pool = list.length ? list : [...Cars.keys()];
+  if (!pool.length) return;
+  const i = pool.indexOf(App.chaseNum);
+  setChase(pool[i < 0 ? 0 : (i + dir + pool.length) % pool.length]);
+}
+addEventListener('keydown', e => {
+  if (App.view !== 'chase' || /INPUT|SELECT/.test(document.activeElement && document.activeElement.tagName)) return;
+  if (e.key === 'ArrowLeft') cycleChase(-1); else if (e.key === 'ArrowRight') cycleChase(1);
+});
 
 /* ================= Flat (non-headset) camera ================= */
 const orbit = { yaw: 0.5, pitch: 0.9, dist: 1.6, lookYaw: 0, lookPitch: -0.05 };
@@ -1137,7 +1233,7 @@ function resize() {
 addEventListener('resize', resize); resize();
 
 /* ================= Headset panels ================= */
-const UIW = 1024, UIH = 720;
+const UIW = 1024, UIH = 820;
 const uiCanvas = document.createElement('canvas'); uiCanvas.width = UIW; uiCanvas.height = UIH;
 const uctx = uiCanvas.getContext('2d');
 const uiTex = new THREE.CanvasTexture(uiCanvas);
@@ -1146,6 +1242,23 @@ uiMesh.visible = false; scene.add(uiMesh);
 const chaseRT = new THREE.WebGLRenderTarget(960, 540);
 const chaseMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.405), new THREE.MeshBasicMaterial({ map: chaseRT.texture }));
 chaseMesh.visible = false; scene.add(chaseMesh);
+const clCanvas = document.createElement('canvas'); clCanvas.width = 768; clCanvas.height = 96;
+const clTex = new THREE.CanvasTexture(clCanvas);
+const chaseLabel = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.09), new THREE.MeshBasicMaterial({ map: clTex, transparent: true }));
+chaseLabel.position.y = 0.255; chaseMesh.add(chaseLabel);
+function drawChaseLabel() {
+  const c = clCanvas.getContext('2d'), car = Cars.get(App.chaseNum), row = App.board.find(r => r.num === App.chaseNum);
+  c.clearRect(0, 0, 768, 96); rr(c, 0, 0, 768, 96, 18); c.fillStyle = 'rgba(32,38,43,0.95)'; c.fill();
+  const hov = App.hoverChase;
+  c.font = '700 54px "Barlow Condensed", sans-serif'; c.textBaseline = 'middle';
+  c.fillStyle = hov === -1 ? '#D2342B' : '#94A1A8'; c.fillText('‹ Prev', 24, 50);
+  c.textAlign = 'right'; c.fillStyle = hov === 1 ? '#D2342B' : '#94A1A8'; c.fillText('Next ›', 744, 50); c.textAlign = 'center';
+  if (car) {
+    c.fillStyle = car.color; c.fillRect(250, 24, 10, 52);
+    c.fillStyle = '#E9E6DF'; c.fillText((row ? 'P' + row.pos + '  ' : '') + car.tla, 400, 50);
+  }
+  c.textAlign = 'left'; clTex.needsUpdate = true;
+}
 const reticle = new THREE.Mesh(new THREE.RingGeometry(0.06, 0.08, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xd2342b }));
 reticle.matrixAutoUpdate = false; reticle.visible = false; scene.add(reticle);
 
@@ -1170,7 +1283,8 @@ function drawXRPanel() {
   }
   App.board.slice(0, 22).forEach((r, i) => {
     const col = i < 11 ? 0 : 1, x = 32 + col * 490, y = 92 + (i % 11) * 38;
-    if (r.num === App.chaseNum) { rr(c, x - 6, y, 476, 36, 6); c.fillStyle = '#3A454C'; c.fill(); }
+    const hovered = App.hoverPx && App.hoverPx.x >= x - 6 && App.hoverPx.x <= x + 470 && App.hoverPx.y >= y && App.hoverPx.y <= y + 36;
+    if (r.num === App.chaseNum || hovered) { rr(c, x - 6, y, 476, 36, 6); c.fillStyle = r.num === App.chaseNum ? '#3A454C' : '#2C353B'; c.fill(); }
     c.globalAlpha = r.out ? 0.45 : 1;
     c.font = '600 26px "Barlow Condensed", sans-serif'; c.fillStyle = '#94A1A8'; c.textAlign = 'right'; c.fillText(String(r.pos), x + 30, y + 28); c.textAlign = 'left';
     c.fillStyle = r.color; c.fillRect(x + 42, y + 6, 6, 24);
@@ -1184,7 +1298,9 @@ function drawXRPanel() {
   });
   if (!App.board.length) { c.font = '500 26px Barlow'; c.fillStyle = '#94A1A8'; c.fillText(App.track ? 'Waiting for timing data…' : 'Load a session in the browser panel first.', 32, 140); }
   const btn = (x, y, w, label, on, fn) => {
-    rr(c, x, y, w, 62, 12); c.fillStyle = on ? '#D2342B' : '#2F383E'; c.fill();
+    const hv = App.hoverPx && App.hoverPx.x >= x && App.hoverPx.x <= x + w && App.hoverPx.y >= y && App.hoverPx.y <= y + 62;
+    rr(c, x, y, w, 62, 12); c.fillStyle = on ? '#D2342B' : (hv ? '#46525A' : '#2F383E'); c.fill();
+    if (hv) { c.strokeStyle = '#E9E6DF'; c.lineWidth = 3; c.stroke(); }
     c.fillStyle = '#E9E6DF'; c.font = '600 27px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.fillText(label, x + w / 2, y + 41); c.textAlign = 'left';
     hits.push({ x, y, w, h: 62, fn });
   };
@@ -1209,6 +1325,15 @@ function drawXRPanel() {
     btn(x, y2, 150, 'Speed ' + Replay.speed + '×', false, cycleSpeed); x += 160;
     c.font = '600 28px "Barlow Condensed"'; c.fillStyle = '#94A1A8'; c.fillText(fmtClock(Replay.t - Replay.start), x + 10, y2 + 42);
   }
+  const y3 = 712, car = Cars.get(App.chaseNum), row = App.board.find(r => r.num === App.chaseNum);
+  btn(32, y3, 200, '‹ Prev car', false, () => cycleChase(-1));
+  btn(UIW - 232, y3, 200, 'Next car ›', false, () => cycleChase(1));
+  c.textAlign = 'center'; c.font = '700 34px "Barlow Condensed", sans-serif';
+  if (car) {
+    c.fillStyle = car.color; c.fillRect(UIW / 2 - 150, y3 + 14, 8, 36);
+    c.fillStyle = '#E9E6DF'; c.fillText(`${row ? 'P' + row.pos + '  ' : ''}${car.tla}${App.view === 'chase' ? '' : ' (chase car)'}`, UIW / 2 + 10, y3 + 44);
+  } else { c.fillStyle = '#94A1A8'; c.fillText('No car selected', UIW / 2, y3 + 44); }
+  c.textAlign = 'left';
   App.uiHits = hits; uiTex.needsUpdate = true;
 }
 
@@ -1224,13 +1349,14 @@ const raycaster = new THREE.Raycaster(), tmpM = new THREE.Matrix4();
 function rayFrom(c) { tmpM.identity().extractRotation(c.matrixWorld); raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld); raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tmpM); }
 function onSelect(e) {
   const c = e.target; rayFrom(c);
-  const hit = raycaster.intersectObjects([uiMesh, chaseMesh].filter(m => m.visible))[0];
+  const hit = raycaster.intersectObjects([uiMesh, chaseMesh, chaseLabel].filter(m => m.visible && (m !== chaseLabel || chaseMesh.visible)), false)[0];
   if (hit && hit.object === uiMesh && hit.uv) {
     const px = hit.uv.x * UIW, py = (1 - hit.uv.y) * UIH;
     const h = (App.uiHits || []).find(b => px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h);
     if (h) { h.fn(); App.uiDirty = true; }
     return;
   }
+  if (hit && (hit.object === chaseMesh || hit.object === chaseLabel) && hit.uv) { cycleChase(hit.uv.x < 0.5 ? -1 : 1); return; }
   if (hit) return;
   if (App.placing && App.view !== 'trackside') {
     if (reticle.visible) placeTabletop(new THREE.Vector3().setFromMatrixPosition(reticle.matrix));
@@ -1284,24 +1410,44 @@ async function enterXR() {
   } catch (e) { toast('Could not start the headset view: ' + e.message, 7000); }
 }
 function xrTick(frame, dt) {
+  let hp = null, hc = 0;
   for (const c of controllers) {
     rayFrom(c);
-    const hit = raycaster.intersectObjects([uiMesh, chaseMesh].filter(m => m.visible))[0];
+    const hit = raycaster.intersectObjects([uiMesh, chaseMesh, chaseLabel].filter(m => m.visible && (m !== chaseLabel || chaseMesh.visible)), false)[0];
     c.userData.line.scale.z = hit ? hit.distance : 2;
+    c.userData.line.material.color.setHex(hit ? 0xd2342b : 0xe9e6df);
+    if (hit && hit.uv) {
+      if (hit.object === uiMesh) hp = { x: hit.uv.x * UIW, y: (1 - hit.uv.y) * UIH };
+      else hc = hit.uv.x < 0.5 ? -1 : 1;
+    }
   }
+  const key = hp ? ((App.uiHits || []).findIndex(b => hp.x >= b.x && hp.x <= b.x + b.w && hp.y >= b.y && hp.y <= b.y + b.h)) : -2;
+  App.hoverPx = hp;
+  if (key !== App.hoverKey) { App.hoverKey = key; drawXRPanel(); }
+  if (hc !== App.hoverChase) { App.hoverChase = hc; drawChaseLabel(); }
   if (App.placing && App.view !== 'trackside' && hitSource && frame) {
     const res = frame.getHitTestResults(hitSource);
     if (res.length) { const pose = res[0].getPose(renderer.xr.getReferenceSpace()); if (pose) { reticle.visible = true; reticle.matrix.fromArray(pose.transform.matrix); } }
     else reticle.visible = false;
   } else reticle.visible = false;
   const session = renderer.xr.getSession();
+  if (session && App.view === 'chase') {
+    App.flick = App.flick || {};
+    for (const src of session.inputSources) {
+      const gp = src.gamepad; if (!gp || gp.axes.length < 4 || src.handedness !== 'left') continue;
+      const ax = gp.axes[2], armed = App.flick.left !== false;
+      if (armed && Math.abs(ax) > 0.7) { cycleChase(ax > 0 ? 1 : -1); App.flick.left = false; }
+      else if (Math.abs(ax) < 0.3) App.flick.left = true;
+    }
+  }
   if (session && App.view !== 'trackside' && App.placed) {
     for (const src of session.inputSources) {
       const gp = src.gamepad; if (!gp || gp.axes.length < 4) continue;
       const ax = Math.abs(gp.axes[2]) > 0.15 ? gp.axes[2] : 0, ay = Math.abs(gp.axes[3]) > 0.15 ? gp.axes[3] : 0;
       if (!ax && !ay) continue;
       if (src.handedness === 'right') { App.tableYaw -= ax * dt * 1.6; App.tableScale = Math.max(0.4, Math.min(4, App.tableScale * (1 - ay * dt * 0.9))); }
-      else { App.tableYaw -= ax * dt * 1.6; }
+      else if (App.view !== 'chase') { App.tableYaw -= ax * dt * 1.6; }
+      else continue;
       layoutModel();
     }
   }
@@ -1368,7 +1514,7 @@ renderer.setAnimationLoop((time, frame) => {
     App.uiT = now;
     App.board = App.source === 'replay' ? Replay.board() : App.source === 'live' ? Live.board() : [];
     drawBoard();
-    if (renderer.xr.isPresenting) drawXRPanel();
+    if (renderer.xr.isPresenting) { drawXRPanel(); if (App.view === 'chase') drawChaseLabel(); }
   }
   updateCars(dt);
   updateChaseCam(dt);
