@@ -1,0 +1,20 @@
+name = "kerbside"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+keep_vars = true
+
+# The app (index.html, icons, manifest, sw.js) is served from /public.
+# Anything that isn't a file there (/ws, /status) goes to the Worker.
+[assets]
+directory = "./public"
+
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "F1Relay"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["F1Relay"]
+
+[observability]
+enabled = true
