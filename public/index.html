@@ -385,7 +385,7 @@ modelGround.rotation.x = -Math.PI / 2; modelGround.position.y = -0.4; modelGroun
 
 const asphaltMat = new THREE.MeshToonMaterial({ color: 0x3b4349, side: THREE.DoubleSide });
 const lineMat = new THREE.MeshToonMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
-const slabMat = new THREE.MeshToonMaterial({ color: 0xd8c6a2 });
+const slabMat = new THREE.MeshToonMaterial({ color: 0x5b8a4e });
 const slabEdgeMat = new THREE.MeshToonMaterial({ color: 0xa8916a });
 const darkMat = new THREE.MeshToonMaterial({ color: 0x1c1f22 });
 
@@ -535,6 +535,9 @@ function setTrack(tr) {
   realTrack = onLayer(buildTrackMeshes(tr, 7, 0.03), REAL); realWorld.add(realTrack);
   modelTrackMode = null; rebuildModelTrack();
   computeViewpoints(tr);
+  if (scenery) { modelGroup.remove(scenery.model); realWorld.remove(scenery.real); }
+  scenery = buildScenery(tr);
+  modelGroup.add(scenery.model); realWorld.add(onLayer(scenery.real, REAL));
   for (const car of Cars.values()) { car.idx = -1; car.estP = null; }
   layoutModel(); if (renderer.xr.isPresenting) positionPanels();
 }
@@ -567,6 +570,93 @@ function computeViewpoints(tr) {
     return { pos, look: tr.pts[i].clone(), idx: i };
   });
   App.vpIndex = 0;
+}
+
+/* ---- Grandstands, pit building and surrounding buildings (procedural) ---- */
+let scenery = null;
+const standMat = new THREE.MeshToonMaterial({ color: 0x7d8c99 });
+const roofMat = new THREE.MeshToonMaterial({ color: 0xeef0f1 });
+const bldgMat = new THREE.MeshToonMaterial({ color: 0xe4e6e7 });
+const glassMat = new THREE.MeshToonMaterial({ color: 0x4a5a66 });
+function seeded(seed) {
+  let a = (seed >>> 0) || 1;
+  return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+function buildScenery(tr) {
+  const hw = Math.max(7, tr.extent * 0.0034), clear = hw + 10;
+  const lists = { stand: [], roof: [], bldg: [], glass: [] }, taken = [], v = new THREE.Vector3();
+  const free = (x, z, r) => taken.every(t => Math.hypot(t.x - x, t.z - z) > t.r + r);
+  const trackDist = (x, z) => { v.set(x, 0, z); return tr.nearest(v, -1)[1]; };
+  const box = (list, w, h, d, x, y, z, m) => { const g = new THREE.BoxGeometry(w, h, d); g.translate(x, y, z); g.applyMatrix4(m); list.push(g); };
+  const frameAt = (i, side, dist) => {
+    const out = tr.nrm[i].clone().multiplyScalar(side), xa = new THREE.Vector3(out.z, 0, -out.x);
+    const o = tr.pts[i].clone().addScaledVector(out, dist);
+    const m = new THREE.Matrix4().makeBasis(xa, Y, out); m.setPosition(o);
+    return { m, o, out, xa };
+  };
+  const clearFootprint = (i, side, dist, len, depth) => {
+    const { o, out, xa } = frameAt(i, side, dist);
+    for (const a of [-0.5, -0.25, 0, 0.25, 0.5]) for (const b of [0, 0.5, 1]) {
+      if (trackDist(o.x + xa.x * a * len + out.x * b * depth, o.z + xa.z * a * len + out.z * b * depth) < clear - 1) return false;
+    }
+    return free(o.x + out.x * depth / 2, o.z + out.z * depth / 2, Math.max(len, depth) / 2);
+  };
+  const reserve = (o, out, depth, len) => taken.push({ x: o.x + out.x * depth / 2, z: o.z + out.z * depth / 2, r: Math.max(len, depth) / 2 + 6 });
+  const grandstand = (i, side, len) => {
+    const tiers = 6, step = 3, rise = 1.7, depth = tiers * step + 2, dist = clear + 2;
+    if (!clearFootprint(i, side, dist, len, depth)) return false;
+    const { m, o, out } = frameAt(i, side, dist);
+    for (let k = 0; k < tiers; k++) { const h = (k + 1) * rise; box(lists.stand, len, h, step, 0, h / 2, k * step + step / 2, m); }
+    const roofY = tiers * rise + 4.5;
+    box(lists.roof, len + 2, 0.6, tiers * step + 3, 0, roofY, tiers * step / 2, m);
+    for (const a of [-0.45, 0, 0.45]) box(lists.roof, 0.8, roofY, 0.8, a * len, roofY / 2, tiers * step + 0.5, m);
+    reserve(o, out, depth, len);
+    return true;
+  };
+  const pitBuilding = (side, len) => {
+    const depth = 18, dist = clear + 4;
+    if (!clearFootprint(0, side, dist, len, depth)) return false;
+    const { m, o, out } = frameAt(0, side, dist);
+    box(lists.bldg, len, 6, depth, 0, 3, depth / 2, m);
+    box(lists.glass, len - 4, 3, depth - 4, 0, 7.5, depth / 2, m);
+    box(lists.bldg, len, 1, depth, 0, 9.5, depth / 2, m);
+    reserve(o, out, depth, len);
+    return true;
+  };
+  // Pits across from the start/finish viewing spot, main grandstand behind it.
+  const pitSide = pitBuilding(-1, 220) ? -1 : (pitBuilding(1, 220) ? 1 : 0);
+  grandstand(0, pitSide === 1 ? -1 : 1, 170) || grandstand(0, pitSide === 1 ? -1 : 1, 100);
+  // A grandstand on the outside of each featured corner.
+  for (const vp of App.viewpoints) {
+    if (vp.idx === 0) continue;
+    const side = -(Math.sign(tr.curv[vp.idx]) || 1);
+    grandstand(vp.idx, side, 90) || grandstand(vp.idx, side, 50);
+  }
+  // Surrounding buildings, placed the same way every time for a given circuit.
+  const key = String(tr.circuitKey ?? Math.round(tr.length));
+  let h0 = 2166136261; for (const ch of key) h0 = Math.imul(h0 ^ ch.charCodeAt(0), 16777619);
+  const R = seeded(h0);
+  const hx = (tr.w + tr.extent * 0.1) / 2 - 15, hz = (tr.d + tr.extent * 0.1) / 2 - 15;
+  const target = Math.min(80, 30 + Math.round(tr.extent / 150));
+  let placed = 0;
+  for (let a = 0; a < 700 && placed < target; a++) {
+    const x = (R() * 2 - 1) * hx, z = (R() * 2 - 1) * hz;
+    const w = 18 + R() * 45, d = 18 + R() * 45, h = 6 + R() * R() * 38, r = Math.hypot(w, d) / 2;
+    if (!free(x, z, r + 4)) continue;
+    v.set(x, 0, z);
+    const [ni, nd] = tr.nearest(v, -1);
+    if (nd < clear + r + 6) continue;
+    const yaw = Math.atan2(tr.tan[ni].x, tr.tan[ni].z) + (R() < 0.3 ? Math.PI / 4 : 0);
+    const m = new THREE.Matrix4().makeRotationY(yaw).setPosition(x, tr.pts[ni].y, z);
+    box(lists.bldg, w, h, d, 0, h / 2, 0, m);
+    if (h > 16) box(lists.glass, w + 0.3, 1.6, d + 0.3, 0, h * 0.62, 0, m);
+    taken.push({ x, z, r }); placed++;
+  }
+  const geos = {};
+  for (const k of Object.keys(lists)) if (lists[k].length) geos[k] = mergeGeos(lists[k]);
+  const mats = { stand: standMat, roof: roofMat, bldg: bldgMat, glass: glassMat };
+  const make = () => { const g = new THREE.Group(); for (const k of Object.keys(geos)) g.add(new THREE.Mesh(geos[k], mats[k])); return g; };
+  return { model: make(), real: make() };
 }
 
 /* ================= Layout of the model ================= */
