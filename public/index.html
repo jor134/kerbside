@@ -83,6 +83,8 @@ label.check input{width:auto;margin:0}
 #tTime{font:600 16px/1 var(--cond);font-variant-numeric:tabular-nums;min-width:120px;text-align:right}
 #transport select{background:var(--tarmac-2);border:1px solid var(--tarmac-3);border-radius:5px;padding:6px}
 
+#attrib{position:fixed;left:12px;bottom:calc(64px + env(safe-area-inset-bottom,0px));z-index:3;font-size:11px;color:var(--chalk);background:rgba(32,38,43,.7);padding:3px 7px;border-radius:4px;max-width:70vw}
+#attrib:empty{display:none}
 #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);z-index:9;background:var(--chalk);color:var(--tarmac);padding:10px 16px;border-radius:7px;max-width:min(90vw,520px);font-weight:500;opacity:0;pointer-events:none;transition:opacity .2s}
 #toast.show{opacity:1}
 .toggles{position:fixed;bottom:calc(74px + env(safe-area-inset-bottom,0px));right:12px;z-index:6;display:none;gap:8px}
@@ -159,6 +161,11 @@ label.check input{width:auto;margin:0}
     <label style="margin-top:10px">Chase driver<select id="chaseSel"></select></label>
     <button id="vpBtn" class="ghost">Next trackside spot</button>
     <label class="check" style="margin-top:10px"><input type="checkbox" id="skyChk" checked> Sky and grass at trackside</label>
+    <label style="margin-top:10px">Satellite imagery<select id="satSel">
+      <option value="off">Off</option><option value="esri">Esri World Imagery</option><option value="maptiler">MapTiler Satellite</option>
+    </select></label>
+    <label id="mtKeyWrap" hidden>MapTiler key<input id="mtKey" type="password" autocomplete="off" placeholder="From cloud.maptiler.com"></label>
+    <p class="hint" id="satHint"></p>
   </section>
 
   <section id="delayPane" hidden>
@@ -191,6 +198,7 @@ label.check input{width:auto;margin:0}
 
 <div class="toggles"><button id="dockToggle">Menu</button><button id="boardToggle">Order</button></div>
 <div id="toast" role="status"></div>
+<div id="attrib"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -569,6 +577,7 @@ function setTrack(tr) {
   computeViewpoints(tr);
   if (scenery) { modelGroup.remove(scenery.model); realWorld.remove(scenery.real); }
   scenery = buildScenery(tr);
+  clearSatellite(); loadSatellite(tr);
   modelGroup.add(scenery.model); realWorld.add(onLayer(scenery.real, REAL));
   for (const car of Cars.values()) { car.idx = -1; car.estP = null; car.procDirty = true; }
   layoutModel(); if (renderer.xr.isPresenting) positionPanels();
@@ -589,6 +598,7 @@ function rebuildModelTrack() {
   slab.position.y = -thick / 2 - tr.extent * 0.0006; slab.userData.thick = thick;
   slab.visible = mode === 'model'; modelGroup.add(slab);
   modelGround.scale.set(tr.extent * 5, tr.extent * 5, 1);
+  placeSat();
   for (const car of Cars.values()) applyCarScale(car);
 }
 function computeViewpoints(tr) {
@@ -692,6 +702,187 @@ function buildScenery(tr) {
   return { model: make(), real: make() };
 }
 
+/* ================= Satellite imagery ================= */
+// Circuit outlines in real map coordinates come from bacinger/f1-circuits (MIT). The app fits that outline
+// to F1's own track shape, which tells it where every point of the model sits on Earth.
+const SAT = { gen: 0, mesh: null, realMesh: null, tex: null, outlines: null, attrib: '', fits: {} };
+const SAT_SRC = {
+  esri: { max: 18, attrib: 'Imagery © Esri, Maxar, Earthstar Geographics and the GIS User Community',
+    url: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}` },
+  maptiler: { max: 19, attrib: 'Imagery © MapTiler',
+    url: (z, x, y, k) => `https://api.maptiler.com/tiles/satellite-v2/${z}/${x}/${y}.jpg?key=${encodeURIComponent(k)}` }
+};
+const EARTH = 6378137, D2R = Math.PI / 180;
+function setAttrib(text) {
+  SAT.attrib = text;
+  $('#attrib').textContent = text ? text + '. Circuit outlines: bacinger/f1-circuits (MIT).' : '';
+  App.uiDirty = true;
+}
+function clearSatellite() {
+  SAT.gen++;
+  if (SAT.mesh) { modelGroup.remove(SAT.mesh); realWorld.remove(SAT.realMesh); SAT.mesh.geometry.dispose(); SAT.tex.dispose(); SAT.mesh.material.dispose(); }
+  SAT.mesh = SAT.realMesh = SAT.tex = null;
+  if (scenery) scenery.model.visible = scenery.real.visible = true;
+  setAttrib('');
+}
+function reloadSatellite() { clearSatellite(); if (App.track) loadSatellite(App.track); }
+function placeSat() {
+  if (!SAT.mesh || !App.track) return;
+  const tr = App.track, real = modelTrackMode === 'real';
+  SAT.mesh.position.y = real ? -0.35 : (slab ? slab.position.y + slab.userData.thick / 2 + tr.extent * 0.0001 : 0);
+  SAT.mesh.visible = !(App.view === 'trackside' && !App.sky);
+}
+async function loadOutlines() {
+  if (SAT.outlines) return SAT.outlines;
+  for (const br of ['master', 'main']) {
+    try {
+      const r = await fetch(`https://raw.githubusercontent.com/bacinger/f1-circuits/${br}/f1-circuits.geojson`);
+      if (!r.ok) continue;
+      const j = await r.json();
+      SAT.outlines = (j.features || []).map(f => {
+        const g = f.geometry; if (!g) return null;
+        let line = g.type === 'LineString' ? g.coordinates : g.type === 'MultiLineString' ? g.coordinates.slice().sort((a, b) => b.length - a.length)[0] : null;
+        return line && line.length > 20 ? { name: (f.properties && (f.properties.Name || f.properties.name)) || '', line } : null;
+      }).filter(Boolean);
+      return SAT.outlines;
+    } catch (e) {}
+  }
+  throw new Error('Could not download the circuit outlines');
+}
+function resample2(pts, N) {
+  const P = pts.concat([pts[0]]), L = [0];
+  for (let i = 1; i < P.length; i++) L.push(L[i - 1] + Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]));
+  const total = L[L.length - 1], out = []; let j = 0;
+  for (let k = 0; k < N; k++) {
+    const t = k * total / N;
+    while (j < L.length - 2 && L[j + 1] < t) j++;
+    const f = (t - L[j]) / ((L[j + 1] - L[j]) || 1);
+    out.push([P[j][0] + (P[j + 1][0] - P[j][0]) * f, P[j][1] + (P[j + 1][1] - P[j][1]) * f]);
+  }
+  return { pts: out, length: total };
+}
+function centre(pts) { let x = 0, y = 0; for (const p of pts) { x += p[0]; y += p[1]; } x /= pts.length; y /= pts.length; return { c: [x, y], pts: pts.map(p => [p[0] - x, p[1] - y]) }; }
+function fitPair(Apts, Bpts, N, refls, dirs, kList) {
+  const A = centre(Apts), B = centre(Bpts);
+  let AA = 0, BB = 0; for (const a of A.pts) AA += a[0] * a[0] + a[1] * a[1]; for (const b of B.pts) BB += b[0] * b[0] + b[1] * b[1];
+  let best = null;
+  for (const refl of refls) for (const dir of dirs) for (const k0 of kList) {
+    const k = ((k0 % N) + N) % N;
+    let Sxx = 0, Sxy = 0, Syx = 0, Syy = 0;
+    for (let i = 0; i < N; i++) {
+      const a = A.pts[i], b = B.pts[(((dir * i + k) % N) + N) % N], ay = a[1] * refl;
+      Sxx += a[0] * b[0]; Sxy += a[0] * b[1]; Syx += ay * b[0]; Syy += ay * b[1];
+    }
+    const th = Math.atan2(Sxy - Syx, Sxx + Syy), num = Math.cos(th) * (Sxx + Syy) + Math.sin(th) * (Sxy - Syx);
+    const rms = Math.sqrt(Math.max(0, BB - num * num / AA) / N);
+    if (!best || rms < best.rms) best = { rms, th, sc: num / AA, refl, dir, k, ac: A.c, bc: B.c };
+  }
+  return best;
+}
+function fitCircuit(tr, outlines) {
+  const N = 128, N2 = 2048;
+  const loc = tr.pts.map(p => [p.x, -p.z]), A0 = resample2(loc, N);
+  const all = [...Array(N).keys()];
+  let best = null;
+  for (const o of outlines) {
+    const lat0 = o.line.reduce((s, p) => s + p[1], 0) / o.line.length, lon0 = o.line.reduce((s, p) => s + p[0], 0) / o.line.length;
+    const kx = EARTH * D2R * Math.cos(lat0 * D2R), ky = EARTH * D2R;
+    const geo = o.line.map(p => [(p[0] - lon0) * kx, (p[1] - lat0) * ky]);
+    const B0 = resample2(geo, N);
+    const ratio = B0.length / A0.length; if (ratio < 0.8 || ratio > 1.25) continue;
+    const f = fitPair(A0.pts, B0.pts, N, [1, -1], [1, -1], all);
+    if (!best || f.rms < best.rms) best = Object.assign(f, { geo, lat0, lon0, kx, ky, name: o.name });
+  }
+  if (!best) return null;
+  // refine the start-point match at much finer spacing
+  const r = N2 / N, ks = []; for (let d = -2 * r; d <= 2 * r; d++) ks.push(best.k * r + d);
+  const fine = fitPair(resample2(loc, N2).pts, resample2(best.geo, N2).pts, N2, [best.refl], [best.dir], ks);
+  return Object.assign(best, fine);
+}
+function localToLatLon(f, x, z) {
+  const ax = x - f.ac[0], ay = (-z - f.ac[1]) * f.refl, c = Math.cos(f.th), s = Math.sin(f.th);
+  const gx = f.bc[0] + f.sc * (c * ax - s * ay), gy = f.bc[1] + f.sc * (s * ax + c * ay);
+  return [f.lat0 + gy / f.ky, f.lon0 + gx / f.kx];
+}
+function mercPx(lat, lon, z) {
+  const n = 256 * Math.pow(2, z), lr = lat * D2R;
+  return [(lon + 180) / 360 * n, (1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n];
+}
+async function loadSatellite(tr) {
+  const srcKey = store.get('sat', 'off'), src = SAT_SRC[srcKey];
+  $('#satHint').textContent = '';
+  if (!src) return;
+  const key = store.get('mtKey', '');
+  if (srcKey === 'maptiler' && !key) { $('#satHint').textContent = 'Add your MapTiler key to load imagery.'; return; }
+  const gen = SAT.gen;
+  try {
+    $('#satHint').textContent = 'Lining up satellite imagery…';
+    const ck = 'sat:' + tr.circuitKey + ':' + Math.round(tr.length);
+    let f = SAT.fits[ck];
+    if (!f) {
+      f = fitCircuit(tr, await loadOutlines());
+      if (gen !== SAT.gen) return;
+      const tol = Math.max(30, tr.extent * 0.012);
+      if (!f || f.rms > tol || f.sc < 0.85 || f.sc > 1.15) throw new Error('This circuit’s outline didn’t line up with the F1 data closely enough');
+      SAT.fits[ck] = f;
+    }
+    const mw = tr.w + tr.extent * 0.1, md = tr.d + tr.extent * 0.1;
+    const geo = new THREE.PlaneGeometry(mw, md, 40, 40); geo.rotateX(-Math.PI / 2);
+    const pos = geo.attributes.position, ll = [];
+    for (let i = 0; i < pos.count; i++) ll.push(localToLatLon(f, pos.getX(i), pos.getZ(i)));
+    let z = src.max, px, minX, minY, maxX, maxY;
+    for (; z > 10; z--) {
+      px = ll.map(p => mercPx(p[0], p[1], z));
+      minX = Math.min(...px.map(p => p[0])); maxX = Math.max(...px.map(p => p[0]));
+      minY = Math.min(...px.map(p => p[1])); maxY = Math.max(...px.map(p => p[1]));
+      if (maxX - minX <= 3800 && maxY - minY <= 3800) break;
+    }
+    const tx0 = Math.floor(minX / 256), tx1 = Math.floor(maxX / 256), ty0 = Math.floor(minY / 256), ty1 = Math.floor(maxY / 256);
+    const W = (tx1 - tx0 + 1) * 256, H = (ty1 - ty0 + 1) * 256;
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const cx = cv.getContext('2d'); cx.fillStyle = '#5b8a4e'; cx.fillRect(0, 0, W, H);
+    const jobs = [];
+    for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) jobs.push([tx, ty]);
+    let done = 0, failed = 0;
+    const worker = async () => {
+      while (jobs.length) {
+        const [tx, ty] = jobs.shift();
+        if (gen !== SAT.gen) return;
+        await new Promise(res => {
+          const img = new Image(); img.crossOrigin = 'anonymous';
+          img.onload = () => { cx.drawImage(img, (tx - tx0) * 256, (ty - ty0) * 256, 256, 256); res(); };
+          img.onerror = () => { failed++; res(); };
+          img.src = src.url(z, tx, ty, key);
+        });
+        done++;
+        if (done % 20 === 0) $('#satHint').textContent = `Loading satellite imagery… ${Math.round(done / ((tx1 - tx0 + 1) * (ty1 - ty0 + 1)) * 100)}%`;
+      }
+    };
+    await Promise.all(Array.from({ length: 8 }, worker));
+    if (gen !== SAT.gen) return;
+    const total = (tx1 - tx0 + 1) * (ty1 - ty0 + 1);
+    if (failed > total * 0.5) throw new Error(srcKey === 'maptiler' ? 'MapTiler refused most tiles. Check the key.' : 'Most imagery tiles failed to load');
+    const uv = geo.attributes.uv;
+    for (let i = 0; i < pos.count; i++) uv.setXY(i, (px[i][0] - tx0 * 256) / W, 1 - (px[i][1] - ty0 * 256) / H);
+    uv.needsUpdate = true;
+    const tex = new THREE.CanvasTexture(cv);
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    try { cx.getImageData(0, 0, 1, 1); } catch (e) { throw new Error('This imagery source blocks use in 3D (no cross-origin access)'); }
+    const mat = new THREE.MeshBasicMaterial({ map: tex });
+    SAT.tex = tex; SAT.mesh = new THREE.Mesh(geo, mat);
+    SAT.realMesh = new THREE.Mesh(geo, mat); SAT.realMesh.position.y = -0.35; onLayer(SAT.realMesh, REAL);
+    modelGroup.add(SAT.mesh); realWorld.add(SAT.realMesh);
+    if (scenery) scenery.model.visible = scenery.real.visible = false;
+    placeSat();
+    setAttrib(src.attrib);
+    $('#satHint').textContent = failed ? `Imagery loaded (${failed} tiles missing).` : 'Imagery loaded.';
+  } catch (e) {
+    if (gen !== SAT.gen) return;
+    $('#satHint').textContent = 'Satellite unavailable: ' + e.message + '.';
+    toast('Satellite imagery: ' + e.message + '. Showing plain green instead.', 7000);
+  }
+}
+
 /* ================= Layout of the model ================= */
 const Y = new THREE.Vector3(0, 1, 0);
 function layoutModel() {
@@ -721,6 +912,7 @@ function layoutModel() {
   if (showSky) sky.layers.enable(0); else sky.layers.disable(0);
   scene.fog = showSky ? FOG : null;
   if (!renderer.xr.isPresenting) scene.background = showSky ? null : BG;
+  placeSat();
 }
 
 /* ================= Replay ================= */
@@ -1356,6 +1548,7 @@ function drawXRPanel() {
     c.fillStyle = '#E9E6DF'; c.fillText(`${row ? 'P' + row.pos + '  ' : ''}${car.tla}${App.view === 'chase' ? '' : ' (chase car)'}`, UIW / 2 + 10, y3 + 44);
   } else { c.fillStyle = '#94A1A8'; c.fillText('No car selected', UIW / 2, y3 + 44); }
   c.textAlign = 'left';
+  if (SAT.attrib) { c.font = '400 18px Barlow, sans-serif'; c.fillStyle = '#94A1A8'; c.fillText(SAT.attrib, 32, 806); }
   App.uiHits = hits; uiTex.needsUpdate = true;
 }
 
@@ -1608,6 +1801,10 @@ document.querySelectorAll('#viewSeg button').forEach(b => b.onclick = () => setV
 $('#chaseSel').onchange = e => setChase(e.target.value);
 $('#vpBtn').onclick = nextViewpoint;
 $('#skyChk').onchange = e => { App.sky = e.target.checked; layoutModel(); };
+$('#satSel').value = store.get('sat', 'off'); $('#mtKey').value = store.get('mtKey', '');
+$('#mtKeyWrap').hidden = $('#satSel').value !== 'maptiler';
+$('#satSel').onchange = e => { store.set('sat', e.target.value); $('#mtKeyWrap').hidden = e.target.value !== 'maptiler'; reloadSatellite(); };
+$('#mtKey').onchange = e => { store.set('mtKey', e.target.value.trim()); if ($('#satSel').value === 'maptiler') reloadSatellite(); };
 $('#forceEst').onchange = e => { App.forceEst = e.target.checked; };
 document.querySelectorAll('.delay button').forEach(b => b.onclick = () => setDelay(Live.delay + +b.dataset.d));
 setDelay(Live.delay);
