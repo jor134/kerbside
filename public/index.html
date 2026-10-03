@@ -166,6 +166,7 @@ body:not(.board-open) #board{display:none}
     <label class="check"><input type="checkbox" id="topRot"> Top view turns with the car</label>
     <button id="vpBtn" class="ghost">Next trackside spot</button>
     <label class="check" style="margin-top:10px"><input type="checkbox" id="skyChk" checked> Sky and grass at trackside</label>
+    <label class="check" style="margin-top:10px"><input type="checkbox" id="sceneryChk"> Grandstands and buildings</label>
     <label style="margin-top:10px">Satellite imagery<select id="satSel">
       <option value="off">Off</option><option value="esri">Esri World Imagery</option><option value="maptiler">MapTiler Satellite</option>
     </select></label>
@@ -583,7 +584,7 @@ function setTrack(tr) {
   if (scenery) { modelGroup.remove(scenery.model); realWorld.remove(scenery.real); }
   scenery = buildScenery(tr);
   clearSatellite(); loadSatellite(tr);
-  modelGroup.add(scenery.model); realWorld.add(onLayer(scenery.real, REAL));
+  modelGroup.add(scenery.model); realWorld.add(onLayer(scenery.real, REAL)); applyScenery();
   for (const car of Cars.values()) { car.idx = -1; car.estP = null; car.procDirty = true; }
   layoutModel(); if (renderer.xr.isPresenting) positionPanels();
 }
@@ -707,6 +708,14 @@ function buildScenery(tr) {
   return { model: make(), real: make() };
 }
 
+App.scenery = store.get('scenery', true);
+function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
+function setScenery(on) {
+  App.scenery = on; store.set('scenery', on); applyScenery();
+  const cb = document.getElementById('sceneryChk'); if (cb) cb.checked = on;
+  App.uiDirty = true; if (renderer.xr.isPresenting) drawXRPanel();
+}
+
 /* ================= Satellite imagery ================= */
 // Circuit outlines in real map coordinates come from bacinger/f1-circuits (MIT). The app fits that outline
 // to F1's own track shape, which tells it where every point of the model sits on Earth.
@@ -728,7 +737,6 @@ function clearSatellite() {
   if (SAT.mesh) { modelGroup.remove(SAT.mesh); realWorld.remove(SAT.realMesh); SAT.mesh.geometry.dispose(); SAT.tex.dispose(); SAT.mesh.material.dispose(); }
   if (SAT.skirt) { modelGroup.remove(SAT.skirt); SAT.skirt.geometry.dispose(); SAT.skirt = null; }
   SAT.mesh = SAT.realMesh = SAT.tex = null;
-  if (scenery) scenery.model.visible = scenery.real.visible = true;
   setAttrib('');
 }
 function reloadSatellite() { clearSatellite(); if (App.track) loadSatellite(App.track); }
@@ -925,7 +933,6 @@ async function loadSatellite(tr) {
     SAT.realMesh = new THREE.Mesh(geo, mat); onLayer(SAT.realMesh, REAL);
     SAT.skirt = new THREE.Mesh(skirtGeo(pos, SEG), slabEdgeMat); modelGroup.add(SAT.skirt);
     modelGroup.add(SAT.mesh); realWorld.add(SAT.realMesh);
-    if (scenery) scenery.model.visible = scenery.real.visible = false;
     placeSat();
     setAttrib(src.attrib);
     $('#satHint').textContent = failed ? `Imagery loaded (${failed} tiles missing).` : 'Imagery loaded.';
@@ -1620,12 +1627,14 @@ function drawXRPanel() {
     c.font = '700 34px "Barlow Condensed"'; c.fillStyle = '#E9E6DF'; c.textAlign = 'center'; c.fillText('Delay ' + Live.delay + ' s', x + 85, y2 + 43); c.textAlign = 'left'; x += 180;
     for (const d of [1, 5]) { btn(x, y2, 90, '+' + d + ' s', false, () => setDelay(Live.delay + d)); x += 100; }
     btn(x + 20, y2, 230, App.forceEst ? 'Estimated: on' : 'Estimated: off', App.forceEst, () => { App.forceEst = !App.forceEst; $('#forceEst').checked = App.forceEst; App.uiDirty = true; });
+    btn(872, y2, 120, App.scenery ? 'Stands on' : 'Stands off', App.scenery, () => setScenery(!App.scenery));
   } else if (App.source === 'replay') {
     btn(x, y2, 120, '−30 s', false, () => Replay.seek(Replay.t - 30000)); x += 130;
     btn(x, y2, 140, Replay.playing ? 'Pause' : 'Play', Replay.playing, togglePlay); x += 150;
     btn(x, y2, 120, '+30 s', false, () => Replay.seek(Replay.t + 30000)); x += 130;
     btn(x, y2, 150, 'Speed ' + Replay.speed + '×', false, cycleSpeed); x += 160;
     c.font = '600 28px "Barlow Condensed"'; c.fillStyle = '#94A1A8'; c.fillText(fmtClock(Replay.t - Replay.start), x + 10, y2 + 42);
+    btn(872, y2, 120, App.scenery ? 'Stands on' : 'Stands off', App.scenery, () => setScenery(!App.scenery));
   }
   const y3 = 712, car = Cars.get(App.chaseNum), row = App.board.find(r => r.num === App.chaseNum);
   btn(32, y3, 200, '‹ Prev car', false, () => cycleChase(-1));
@@ -1896,7 +1905,9 @@ $('#vpBtn').onclick = nextViewpoint;
 $('#skyChk').onchange = e => { App.sky = e.target.checked; layoutModel(); };
 $('#satSel').value = store.get('sat', 'off'); $('#mtKey').value = store.get('mtKey', '');
 $('#mtKeyWrap').hidden = $('#satSel').value !== 'maptiler';
-$('#satSel').onchange = e => { store.set('sat', e.target.value); $('#mtKeyWrap').hidden = e.target.value !== 'maptiler'; reloadSatellite(); };
+$('#sceneryChk').checked = App.scenery;
+$('#sceneryChk').onchange = e => setScenery(e.target.checked);
+$('#satSel').onchange = e => { if (e.target.value !== 'off' && store.get('sat', 'off') === 'off') setScenery(false); store.set('sat', e.target.value); $('#mtKeyWrap').hidden = e.target.value !== 'maptiler'; reloadSatellite(); };
 $('#mtKey').onchange = e => { store.set('mtKey', e.target.value.trim()); if ($('#satSel').value === 'maptiler') reloadSatellite(); };
 $('#forceEst').onchange = e => { App.forceEst = e.target.checked; };
 document.querySelectorAll('.delay button').forEach(b => b.onclick = () => setDelay(Live.delay + +b.dataset.d));
