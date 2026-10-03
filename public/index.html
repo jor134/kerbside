@@ -54,6 +54,12 @@ label.check input{width:auto;margin:0}
 .primary{width:100%;border:0;background:var(--kerb);border-radius:6px;padding:10px;font:600 17px/1 var(--cond)}
 .ghost{width:100%;margin-top:8px;border:1px solid var(--tarmac-3);background:none;border-radius:6px;padding:8px;font:600 15px/1 var(--cond)}
 .hint{color:var(--muted);font-size:13px;margin:8px 0 0}
+.howto{margin-top:12px;border:1px solid var(--tarmac-3);border-radius:7px;padding:8px 10px;font-size:13px}
+.howto summary{cursor:pointer;font:600 16px/1.3 var(--cond);color:var(--chalk)}
+.howto p{color:var(--muted);margin:8px 0}
+.howto ol{margin:6px 0 0;padding-left:20px}
+.howto li{margin:0 0 7px}
+.howto b{color:var(--chalk);font-weight:600}
 .delay{display:flex;align-items:center;gap:6px}
 .delay button{flex:0 0 auto;border:1px solid var(--tarmac-3);background:var(--tarmac-2);border-radius:5px;padding:7px 9px;font:600 15px/1 var(--cond)}
 .delay output{flex:1;text-align:center;font:700 24px/1 var(--cond);font-variant-numeric:tabular-nums}
@@ -123,8 +129,24 @@ label.check input{width:auto;margin:0}
     <label>Relay address (leave blank to use this site)<input id="relayUrl" placeholder="This site" autocomplete="off"></label>
     <label>Relay key<input id="relayKey" type="password" autocomplete="off"></label>
     <button id="connectBtn" class="primary">Connect</button>
+    <button id="shareBtn" class="ghost">Share link with friends</button>
     <label class="check" style="margin-top:10px"><input type="checkbox" id="forceEst"> Use estimated positions</label>
     <p class="hint" id="liveHint">The relay forwards F1 live timing. Car positions need your F1 TV token on the relay.</p>
+    <details class="howto">
+      <summary>How to get your F1 TV token</summary>
+      <p>Do this on a computer in Chrome. The Quest browser has no developer tools.</p>
+      <ol>
+        <li>Go to <b>f1tv.formula1.com</b> and sign in with your F1 TV Pro account.</li>
+        <li>Press <b>F12</b> (Mac: <b>Cmd + Option + I</b>) to open DevTools.</li>
+        <li>Open the <b>Application</b> tab. If you can't see it, click <b>»</b> at the top of DevTools.</li>
+        <li>In the left column, expand <b>Storage → Cookies</b> and click each <b>formula1.com</b> entry until you find a cookie named <b>login-session</b>. Typing it into the filter box helps.</li>
+        <li>Click that row and copy the whole <b>Cookie Value</b> shown at the bottom. It's long; select all of it.</li>
+        <li>In the Cloudflare dashboard, open <b>Workers &amp; Pages → kerbside → Settings → Variables and Secrets</b>.</li>
+        <li>Edit the <b>F1TV_TOKEN</b> secret, paste the value, and click <b>Deploy</b>.</li>
+        <li>Press <b>Connect</b> here. The line above shows when the token expires.</li>
+      </ol>
+      <p>Repeat these steps when live positions stop and the relay says the token was refused. These steps are based on how F1's site worked when this was written and may change.</p>
+    </details>
   </section>
 
   <section>
@@ -1557,11 +1579,31 @@ async function loadSessionList(year) {
 })();
 $('#loadBtn').onclick = () => { const s = sessions[+$('#session').value]; if (s) Replay.load(s); };
 $('#connectBtn').onclick = () => Live.connect();
+function showSource(src) {
+  document.querySelectorAll('#srcSeg button').forEach(x => x.classList.toggle('on', x.dataset.src === src));
+  $('#replayPane').hidden = src !== 'replay'; $('#livePane').hidden = src !== 'live';
+}
+$('#shareBtn').onclick = async () => {
+  const key = $('#relayKey').value.trim();
+  if (!key) { toast('Enter the relay key first.'); return; }
+  const typed = $('#relayUrl').value.trim().replace(/\/+$/, '');
+  const link = location.origin + location.pathname + '#key=' + encodeURIComponent(key) + (typed && typed !== location.origin ? '&relay=' + encodeURIComponent(typed) : '');
+  try {
+    if (navigator.share) { await navigator.share({ title: 'Kerbside', text: 'Live F1 positions on a model of the circuit', url: link }); return; }
+    await navigator.clipboard.writeText(link); toast('Link copied. Anyone with it can watch live through your relay.');
+  } catch (e) { if (e && e.name !== 'AbortError') prompt('Copy this link:', link); }
+};
+(function joinFromLink() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  const key = h.get('key'); if (!key) return;
+  $('#relayKey').value = key; store.set('relayKey', key);
+  const relay = h.get('relay'); if (relay) { $('#relayUrl').value = relay; store.set('relayUrl', relay); }
+  history.replaceState(null, '', location.pathname + location.search);
+  showSource('live');
+  Live.connect();
+})();
 $('#relayUrl').value = store.get('relayUrl', ''); $('#relayKey').value = store.get('relayKey', '');
-document.querySelectorAll('#srcSeg button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('#srcSeg button').forEach(x => x.classList.toggle('on', x === b));
-  $('#replayPane').hidden = b.dataset.src !== 'replay'; $('#livePane').hidden = b.dataset.src !== 'live';
-});
+document.querySelectorAll('#srcSeg button').forEach(b => b.onclick = () => showSource(b.dataset.src));
 document.querySelectorAll('#viewSeg button').forEach(b => b.onclick = () => setView(b.dataset.view));
 $('#chaseSel').onchange = e => setChase(e.target.value);
 $('#vpBtn').onclick = nextViewpoint;
