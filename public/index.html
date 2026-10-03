@@ -87,15 +87,16 @@ label.check input{width:auto;margin:0}
 #attrib:empty{display:none}
 #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);z-index:9;background:var(--chalk);color:var(--tarmac);padding:10px 16px;border-radius:7px;max-width:min(90vw,520px);font-weight:500;opacity:0;pointer-events:none;transition:opacity .2s}
 #toast.show{opacity:1}
-.toggles{position:fixed;bottom:calc(74px + env(safe-area-inset-bottom,0px));right:12px;z-index:6;display:none;gap:8px}
-.toggles button{border:1px solid var(--tarmac-3);background:var(--tarmac);border-radius:6px;padding:8px 12px;font:600 16px/1 var(--cond)}
+.tog{background:none;border:1px solid var(--tarmac-3);border-radius:6px;padding:8px 12px;font:600 16px/1 var(--cond);color:var(--muted)}
+.tog[aria-pressed="true"]{background:var(--chalk);color:var(--tarmac);border-color:var(--chalk)}
+body:not(.dock-open) #dock{display:none}
+body:not(.board-open) #board{display:none}
 [hidden]{display:none!important}
 @media (max-width:760px){
-  .toggles{display:flex}
   #dock,#board{top:auto;bottom:calc(130px + env(safe-area-inset-bottom,0px));left:10px;right:10px;width:auto;max-height:55%}
-  body:not(.dock-open) #dock{display:none}
-  body:not(.board-open) #board{display:none}
   #status{display:none}
+  .brand{font-size:22px}
+  .barin{gap:8px}
   #tTime{min-width:0}
 }
 @media (prefers-reduced-motion:reduce){#toast{transition:none}}
@@ -110,6 +111,8 @@ label.check input{width:auto;margin:0}
     <div class="brand">Kerbside</div>
     <div id="status">Choose a session to begin</div>
     <div id="flag"></div>
+    <button id="dockToggle" class="tog" aria-pressed="false">Menu</button>
+    <button id="boardToggle" class="tog" aria-pressed="false">Order</button>
     <button id="installBtn" hidden>Install app</button>
     <button id="xrBtn" disabled>Checking headset…</button>
   </div>
@@ -157,8 +160,10 @@ label.check input{width:auto;margin:0}
       <button data-view="tabletop" class="on">Tabletop</button>
       <button data-view="trackside">Trackside</button>
       <button data-view="chase">Chase</button>
+      <button data-view="top">Top</button>
     </div>
-    <label style="margin-top:10px">Chase driver<select id="chaseSel"></select></label>
+    <label style="margin-top:10px">Followed car<select id="chaseSel"></select></label>
+    <label class="check"><input type="checkbox" id="topRot"> Top view turns with the car</label>
     <button id="vpBtn" class="ghost">Next trackside spot</button>
     <label class="check" style="margin-top:10px"><input type="checkbox" id="skyChk" checked> Sky and grass at trackside</label>
     <label style="margin-top:10px">Satellite imagery<select id="satSel">
@@ -196,7 +201,6 @@ label.check input{width:auto;margin:0}
   </select>
 </footer>
 
-<div class="toggles"><button id="dockToggle">Menu</button><button id="boardToggle">Order</button></div>
 <div id="toast" role="status"></div>
 <div id="attrib"></div>
 
@@ -426,7 +430,7 @@ modelGround.rotation.x = -Math.PI / 2; modelGround.position.y = -0.4; modelGroun
 const asphaltMat = new THREE.MeshToonMaterial({ color: 0x3b4349, side: THREE.DoubleSide });
 const lineMat = new THREE.MeshToonMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
 const slabMat = new THREE.MeshToonMaterial({ color: 0x5b8a4e });
-const slabEdgeMat = new THREE.MeshToonMaterial({ color: 0xa8916a });
+const slabEdgeMat = new THREE.MeshToonMaterial({ color: 0xa8916a, side: THREE.DoubleSide });
 const darkMat = new THREE.MeshToonMaterial({ color: 0x1c1f22 });
 
 function ribbonGeo(tr, o0, o1, lift, colorAt) {
@@ -575,6 +579,7 @@ function setTrack(tr) {
   realTrack = onLayer(buildTrackMeshes(tr, 7, 0.03), REAL); realWorld.add(realTrack);
   modelTrackMode = null; rebuildModelTrack();
   computeViewpoints(tr);
+  orbit.target.set(0, 0, 0);
   if (scenery) { modelGroup.remove(scenery.model); realWorld.remove(scenery.real); }
   scenery = buildScenery(tr);
   clearSatellite(); loadSatellite(tr);
@@ -721,6 +726,7 @@ function setAttrib(text) {
 function clearSatellite() {
   SAT.gen++;
   if (SAT.mesh) { modelGroup.remove(SAT.mesh); realWorld.remove(SAT.realMesh); SAT.mesh.geometry.dispose(); SAT.tex.dispose(); SAT.mesh.material.dispose(); }
+  if (SAT.skirt) { modelGroup.remove(SAT.skirt); SAT.skirt.geometry.dispose(); SAT.skirt = null; }
   SAT.mesh = SAT.realMesh = SAT.tex = null;
   if (scenery) scenery.model.visible = scenery.real.visible = true;
   setAttrib('');
@@ -729,8 +735,15 @@ function reloadSatellite() { clearSatellite(); if (App.track) loadSatellite(App.
 function placeSat() {
   if (!SAT.mesh || !App.track) return;
   const tr = App.track, real = modelTrackMode === 'real';
-  SAT.mesh.position.y = real ? -0.35 : (slab ? slab.position.y + slab.userData.thick / 2 + tr.extent * 0.0001 : 0);
+  SAT.mesh.position.y = 0;
   SAT.mesh.visible = !(App.view === 'trackside' && !App.sky);
+  if (SAT.skirt) {
+    SAT.skirt.visible = !real;
+    const top = slab ? slab.position.y + slab.userData.thick / 2 : -tr.extent * 0.0006;
+    const a = SAT.skirt.geometry.attributes.position;
+    for (let i = 1; i < a.count; i += 2) a.setY(i, top);
+    a.needsUpdate = true;
+  }
 }
 async function loadOutlines() {
   if (SAT.outlines) return SAT.outlines;
@@ -808,6 +821,44 @@ function mercPx(lat, lon, z) {
   const n = 256 * Math.pow(2, z), lr = lat * D2R;
   return [(lon + 180) / 360 * n, (1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n];
 }
+// Ground heights from F1's own track elevation: matches the track exactly near it,
+// eases into a smooth average of the circuit's heights further out. Approximate away from the track.
+function shapeTerrain(tr, pos) {
+  const R = 40, R2 = R * R, FAR = 320, eps = 0.3;
+  const sub = [], step = Math.max(1, Math.floor(tr.N / 200));
+  for (let i = 0; i < tr.N; i += step) sub.push(tr.pts[i]);
+  for (let v = 0; v < pos.count; v++) {
+    const x = pos.getX(v), z = pos.getZ(v);
+    let dmin2 = Infinity, hNear = 0, hLow = Infinity;
+    for (const p of tr.pts) {
+      const d2 = (p.x - x) ** 2 + (p.z - z) ** 2;
+      if (d2 < dmin2) { dmin2 = d2; hNear = p.y; }
+      if (d2 < R2 && p.y < hLow) hLow = p.y; // under crossovers, follow the lower road
+    }
+    const near = hLow < Infinity ? hLow : hNear;
+    let num = 0, den = 0;
+    for (const q of sub) { const w = 1 / ((q.x - x) ** 2 + (q.z - z) ** 2 + 400); num += w * q.y; den += w; }
+    const d = Math.sqrt(dmin2), t = Math.min(1, Math.max(0, (d - R) / (FAR - R))), sm = t * t * (3 - 2 * t);
+    pos.setY(v, near * (1 - sm) + (num / den) * sm - eps);
+  }
+  pos.needsUpdate = true;
+}
+function skirtGeo(pos, SEG) { // basswood sides from the terrain edge down to the model base
+  const row = SEG + 1, ring = [];
+  for (let i = 0; i < row; i++) ring.push(i);
+  for (let j = 1; j < row; j++) ring.push(j * row + SEG);
+  for (let i = SEG - 1; i >= 0; i--) ring.push(SEG * row + i);
+  for (let j = SEG - 1; j >= 0; j--) ring.push(j * row);
+  const verts = [], idx = [];
+  ring.forEach((vi, k) => {
+    verts.push(pos.getX(vi), pos.getY(vi), pos.getZ(vi), pos.getX(vi), 0, pos.getZ(vi));
+    if (k < ring.length - 1) { const a = 2 * k; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  g.setIndex(idx); g.computeVertexNormals();
+  return g;
+}
 async function loadSatellite(tr) {
   const srcKey = store.get('sat', 'off'), src = SAT_SRC[srcKey];
   $('#satHint').textContent = '';
@@ -827,7 +878,7 @@ async function loadSatellite(tr) {
       SAT.fits[ck] = f;
     }
     const mw = tr.w + tr.extent * 0.1, md = tr.d + tr.extent * 0.1;
-    const geo = new THREE.PlaneGeometry(mw, md, 40, 40); geo.rotateX(-Math.PI / 2);
+    const SEG = 80, geo = new THREE.PlaneGeometry(mw, md, SEG, SEG); geo.rotateX(-Math.PI / 2);
     const pos = geo.attributes.position, ll = [];
     for (let i = 0; i < pos.count; i++) ll.push(localToLatLon(f, pos.getX(i), pos.getZ(i)));
     let z = src.max, px, minX, minY, maxX, maxY;
@@ -869,8 +920,10 @@ async function loadSatellite(tr) {
     tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
     try { cx.getImageData(0, 0, 1, 1); } catch (e) { throw new Error('This imagery source blocks use in 3D (no cross-origin access)'); }
     const mat = new THREE.MeshBasicMaterial({ map: tex });
+    shapeTerrain(tr, pos);
     SAT.tex = tex; SAT.mesh = new THREE.Mesh(geo, mat);
-    SAT.realMesh = new THREE.Mesh(geo, mat); SAT.realMesh.position.y = -0.35; onLayer(SAT.realMesh, REAL);
+    SAT.realMesh = new THREE.Mesh(geo, mat); onLayer(SAT.realMesh, REAL);
+    SAT.skirt = new THREE.Mesh(skirtGeo(pos, SEG), slabEdgeMat); modelGroup.add(SAT.skirt);
     modelGroup.add(SAT.mesh); realWorld.add(SAT.realMesh);
     if (scenery) scenery.model.visible = scenery.real.visible = false;
     placeSat();
@@ -1391,6 +1444,23 @@ function updateChaseCam(dt) {
   chaseLook.copy(pick.pos).addScaledVector(f, 8); chaseLook.y += 1;
   chaseCam.position.copy(chaseFrom); chaseCam.lookAt(chaseLook);
 }
+const topCam = new THREE.PerspectiveCamera(45, 16 / 9, 1, 20000); topCam.layers.set(REAL);
+const topFrom = new THREE.Vector3(); let topInit = false;
+const followRing = new THREE.Mesh(new THREE.RingGeometry(0.75, 1, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xd2342b, depthTest: false, transparent: true }));
+followRing.renderOrder = 10; followRing.visible = false; onLayer(followRing, REAL); realWorld.add(followRing);
+function updateTopCam(dt) {
+  const car = App.chaseNum && Cars.get(App.chaseNum);
+  const pick = car && car.valid ? car : [...Cars.values()].find(c => c.valid);
+  followRing.visible = App.view === 'top' && !!pick;
+  if (!pick || App.view !== 'top') { topInit = false; return; }
+  const h = orbit.topH, k = topInit ? 1 - Math.exp(-dt * 6) : 1; topInit = true;
+  topFrom.lerp(vQ.set(pick.pos.x, pick.pos.y + h, pick.pos.z), k);
+  topCam.position.copy(topFrom);
+  if (App.topRotate) topCam.up.set(Math.sin(pick.head), 0, Math.cos(pick.head)); else topCam.up.set(0, 0, -1);
+  topCam.lookAt(topFrom.x, topFrom.y - h, topFrom.z);
+  followRing.position.set(pick.pos.x, pick.pos.y + 0.5, pick.pos.z);
+  followRing.scale.setScalar(Math.max(4, h * 0.035));
+}
 function setChase(num) {
   App.chaseNum = num; chaseInit = false; $('#chaseSel').value = num; App.uiDirty = true;
   if (renderer.xr.isPresenting) { drawXRPanel(); drawChaseLabel(); }
@@ -1403,12 +1473,22 @@ function cycleChase(dir) {
   setChase(pool[i < 0 ? 0 : (i + dir + pool.length) % pool.length]);
 }
 addEventListener('keydown', e => {
-  if (App.view !== 'chase' || /INPUT|SELECT/.test(document.activeElement && document.activeElement.tagName)) return;
+  if ((App.view !== 'chase' && App.view !== 'top') || /INPUT|SELECT/.test(document.activeElement && document.activeElement.tagName)) return;
   if (e.key === 'ArrowLeft') cycleChase(-1); else if (e.key === 'ArrowRight') cycleChase(1);
 });
 
 /* ================= Flat (non-headset) camera ================= */
-const orbit = { yaw: 0.5, pitch: 0.9, dist: 1.6, lookYaw: 0, lookPitch: -0.05 };
+const orbit = { yaw: 0.5, pitch: 0.9, dist: 1.6, lookYaw: 0, lookPitch: -0.05, target: new THREE.Vector3(), topH: 350 };
+function pan(dx, dy) { // the map follows the fingers
+  if (App.view !== 'tabletop' || renderer.xr.isPresenting) return;
+  const k = orbit.dist * 2 * Math.tan(camera.fov * D2R / 2) / Math.max(1, innerHeight);
+  const c = Math.cos(orbit.yaw), sn = Math.sin(orbit.yaw);
+  orbit.target.x += -c * dx * k - sn * dy * k;
+  orbit.target.z += sn * dx * k - c * dy * k;
+  const lim = TABLE_SIZE * 0.7;
+  orbit.target.x = Math.max(-lim, Math.min(lim, orbit.target.x)); orbit.target.z = Math.max(-lim, Math.min(lim, orbit.target.z));
+}
+canvas.addEventListener('contextmenu', e => e.preventDefault());
 const pointers = new Map(); let pinchD = 0;
 canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); });
 canvas.addEventListener('pointerup', e => { pointers.delete(e.pointerId); pinchD = 0; });
@@ -1416,15 +1496,22 @@ canvas.addEventListener('pointercancel', e => { pointers.delete(e.pointerId); pi
 canvas.addEventListener('pointermove', e => {
   const p = pointers.get(e.pointerId); if (!p) return;
   if (pointers.size === 2) {
-    const [a, b] = [...pointers.values()]; p.x = e.clientX; p.y = e.clientY;
-    const d = Math.hypot(a.x - b.x, a.y - b.y); if (pinchD) zoom(pinchD / d); pinchD = d; return;
+    const [a, b] = [...pointers.values()];
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    p.x = e.clientX; p.y = e.clientY;
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (pinchD) { zoom(pinchD / d); pan((a.x + b.x) / 2 - mx, (a.y + b.y) / 2 - my); }
+    pinchD = d; return;
   }
   const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+  if (e.pointerType === 'mouse' && (e.buttons & 6 || e.shiftKey)) { pan(dx, dy); return; }
+  if (App.view === 'top' || App.view === 'chase') return;
   if (App.view === 'trackside') { orbit.lookYaw -= dx * 0.004; orbit.lookPitch = Math.max(-1.2, Math.min(1.2, orbit.lookPitch - dy * 0.004)); }
   else { orbit.yaw -= dx * 0.006; orbit.pitch = Math.max(0.12, Math.min(1.5, orbit.pitch + dy * 0.005)); }
 });
 canvas.addEventListener('wheel', e => { e.preventDefault(); zoom(Math.exp(e.deltaY * 0.001)); }, { passive: false });
 function zoom(f) {
+  if (App.view === 'top') { orbit.topH = Math.max(60, Math.min(4000, orbit.topH * f)); return; }
   if (App.view === 'trackside') { camera.fov = Math.max(15, Math.min(80, camera.fov * f)); camera.updateProjectionMatrix(); }
   else orbit.dist = Math.max(0.25, Math.min(5, orbit.dist * f));
 }
@@ -1436,7 +1523,8 @@ function flatCamTick() {
     if (camera.fov !== 55) { camera.fov = 55; camera.updateProjectionMatrix(); }
     const r = orbit.dist;
     camera.position.set(r * Math.cos(orbit.pitch) * Math.sin(orbit.yaw), r * Math.sin(orbit.pitch), r * Math.cos(orbit.pitch) * Math.cos(orbit.yaw));
-    camera.lookAt(0, 0, 0);
+    camera.position.add(orbit.target);
+    camera.lookAt(orbit.target);
   }
 }
 function resize() {
@@ -1519,13 +1607,13 @@ function drawXRPanel() {
     hits.push({ x, y, w, h: 62, fn });
   };
   let x = 32; const y1 = 534, y2 = 620;
-  for (const [v, l] of [['tabletop', 'Tabletop'], ['trackside', 'Trackside'], ['chase', 'Chase']]) { btn(x, y1, 136, l, App.view === v, () => setView(v)); x += 146; }
-  if (App.view === 'trackside') btn(x, y1, 160, 'Next spot', false, nextViewpoint);
-  else btn(x, y1, 160, 'Place again', App.placing, () => { App.placing = true; App.placed = false; App.uiDirty = true; });
-  x += 170;
-  btn(x, y1, 130, App.sky ? 'Sky on' : 'Sky off', App.sky && App.view === 'trackside', () => { App.sky = !App.sky; $('#skyChk').checked = App.sky; layoutModel(); App.uiDirty = true; });
-  x += 140;
-  btn(x, y1, 160, 'Panels here', false, positionPanels);
+  for (const [v, l] of [['tabletop', 'Tabletop'], ['trackside', 'Trackside'], ['chase', 'Chase'], ['top', 'Top']]) { btn(x, y1, 112, l, App.view === v, () => setView(v)); x += 120; }
+  if (App.view === 'trackside') btn(x, y1, 150, 'Next spot', false, nextViewpoint);
+  else btn(x, y1, 150, 'Place again', App.placing, () => { App.placing = true; App.placed = false; App.uiDirty = true; });
+  x += 158;
+  btn(x, y1, 116, App.sky ? 'Sky on' : 'Sky off', App.sky && App.view === 'trackside', () => { App.sky = !App.sky; $('#skyChk').checked = App.sky; layoutModel(); App.uiDirty = true; });
+  x += 124;
+  btn(x, y1, 150, 'Panels here', false, positionPanels);
   x = 32;
   if (App.source === 'live') {
     for (const d of [-5, -1]) { btn(x, y2, 90, (d < 0 ? '−' : '+') + Math.abs(d) + ' s', false, () => setDelay(Live.delay + d)); x += 100; }
@@ -1545,7 +1633,7 @@ function drawXRPanel() {
   c.textAlign = 'center'; c.font = '700 34px "Barlow Condensed", sans-serif';
   if (car) {
     c.fillStyle = car.color; c.fillRect(UIW / 2 - 150, y3 + 14, 8, 36);
-    c.fillStyle = '#E9E6DF'; c.fillText(`${row ? 'P' + row.pos + '  ' : ''}${car.tla}${App.view === 'chase' ? '' : ' (chase car)'}`, UIW / 2 + 10, y3 + 44);
+    c.fillStyle = '#E9E6DF'; c.fillText(`${row ? 'P' + row.pos + '  ' : ''}${car.tla}${App.view === 'chase' || App.view === 'top' ? '' : ' (followed car)'}`, UIW / 2 + 10, y3 + 44);
   } else { c.fillStyle = '#94A1A8'; c.fillText('No car selected', UIW / 2, y3 + 44); }
   c.textAlign = 'left';
   if (SAT.attrib) { c.font = '400 18px Barlow, sans-serif'; c.fillStyle = '#94A1A8'; c.fillText(SAT.attrib, 32, 806); }
@@ -1646,10 +1734,12 @@ function xrTick(frame, dt) {
     else reticle.visible = false;
   } else reticle.visible = false;
   const session = renderer.xr.getSession();
-  if (session && App.view === 'chase') {
+  if (session && (App.view === 'chase' || App.view === 'top')) {
     App.flick = App.flick || {};
     for (const src of session.inputSources) {
       const gp = src.gamepad; if (!gp || gp.axes.length < 4 || src.handedness !== 'left') continue;
+      const ay = gp.axes[3];
+      if (App.view === 'top' && Math.abs(ay) > 0.2) orbit.topH = Math.max(60, Math.min(4000, orbit.topH * (1 + ay * dt * 1.5)));
       const ax = gp.axes[2], armed = App.flick.left !== false;
       if (armed && Math.abs(ax) > 0.7) { cycleChase(ax > 0 ? 1 : -1); App.flick.left = false; }
       else if (Math.abs(ax) < 0.3) App.flick.left = true;
@@ -1661,12 +1751,12 @@ function xrTick(frame, dt) {
       const ax = Math.abs(gp.axes[2]) > 0.15 ? gp.axes[2] : 0, ay = Math.abs(gp.axes[3]) > 0.15 ? gp.axes[3] : 0;
       if (!ax && !ay) continue;
       if (src.handedness === 'right') { App.tableYaw -= ax * dt * 1.6; App.tableScale = Math.max(0.4, Math.min(4, App.tableScale * (1 - ay * dt * 0.9))); }
-      else if (App.view !== 'chase') { App.tableYaw -= ax * dt * 1.6; }
+      else if (App.view !== 'chase' && App.view !== 'top') { App.tableYaw -= ax * dt * 1.6; }
       else continue;
       layoutModel();
     }
   }
-  chaseMesh.visible = App.view === 'chase';
+  chaseMesh.visible = App.view === 'chase' || App.view === 'top';
 }
 
 /* ================= View switching ================= */
@@ -1729,27 +1819,28 @@ renderer.setAnimationLoop((time, frame) => {
     App.uiT = now;
     App.board = App.source === 'replay' ? Replay.board() : App.source === 'live' ? Live.board() : [];
     drawBoard();
-    if (renderer.xr.isPresenting) { drawXRPanel(); if (App.view === 'chase') drawChaseLabel(); }
+    if (renderer.xr.isPresenting) { drawXRPanel(); if (App.view === 'chase' || App.view === 'top') drawChaseLabel(); }
   }
   updateCars(dt);
   updateChaseCam(dt);
+  updateTopCam(dt);
   const xr = renderer.xr.isPresenting;
   if (xr) {
     xrTick(frame, dt);
-    if (App.view === 'chase' && frameNo % 2 === 0) {
-      const on = renderer.xr.enabled, fog = scene.fog, bg = scene.background;
-      renderer.xr.enabled = false; scene.fog = FOG; scene.background = null;
-      chaseCam.aspect = 16 / 9; chaseCam.updateProjectionMatrix();
-      renderer.setRenderTarget(chaseRT); renderer.render(scene, chaseCam); renderer.setRenderTarget(null);
+    if ((App.view === 'chase' || App.view === 'top') && frameNo % 2 === 0) {
+      const on = renderer.xr.enabled, fog = scene.fog, bg = scene.background, cam = App.view === 'top' ? topCam : chaseCam;
+      renderer.xr.enabled = false; scene.fog = App.view === 'top' ? null : FOG; scene.background = null;
+      cam.aspect = 16 / 9; cam.updateProjectionMatrix();
+      renderer.setRenderTarget(chaseRT); renderer.render(scene, cam); renderer.setRenderTarget(null);
       renderer.xr.enabled = on; scene.fog = fog; scene.background = bg;
     }
     renderer.render(scene, camera);
   } else {
     flatCamTick();
-    if (App.view === 'chase') {
-      const fog = scene.fog; scene.fog = FOG;
-      chaseCam.aspect = camera.aspect; chaseCam.updateProjectionMatrix();
-      renderer.render(scene, chaseCam); scene.fog = fog;
+    if (App.view === 'chase' || App.view === 'top') {
+      const fog = scene.fog, cam = App.view === 'top' ? topCam : chaseCam; scene.fog = App.view === 'top' ? null : FOG;
+      cam.aspect = camera.aspect; cam.updateProjectionMatrix();
+      renderer.render(scene, cam); scene.fog = fog;
     } else renderer.render(scene, camera);
   }
 });
@@ -1799,6 +1890,8 @@ $('#relayUrl').value = store.get('relayUrl', ''); $('#relayKey').value = store.g
 document.querySelectorAll('#srcSeg button').forEach(b => b.onclick = () => showSource(b.dataset.src));
 document.querySelectorAll('#viewSeg button').forEach(b => b.onclick = () => setView(b.dataset.view));
 $('#chaseSel').onchange = e => setChase(e.target.value);
+App.topRotate = store.get('topRot', false); $('#topRot').checked = App.topRotate;
+$('#topRot').onchange = e => { App.topRotate = e.target.checked; store.set('topRot', App.topRotate); };
 $('#vpBtn').onclick = nextViewpoint;
 $('#skyChk').onchange = e => { App.sky = e.target.checked; layoutModel(); };
 $('#satSel').value = store.get('sat', 'off'); $('#mtKey').value = store.get('mtKey', '');
@@ -1815,8 +1908,15 @@ $('#tSpeed').onchange = e => { Replay.speed = +e.target.value; };
 let scrubbing = false;
 $('#tScrub').addEventListener('input', () => { scrubbing = true; });
 $('#tScrub').addEventListener('change', e => { scrubbing = false; Replay.seek(Replay.start + (+e.target.value / 1000) * (Replay.end - Replay.start)); });
-$('#dockToggle').onclick = () => { document.body.classList.toggle('dock-open'); document.body.classList.remove('board-open'); };
-$('#boardToggle').onclick = () => { document.body.classList.toggle('board-open'); document.body.classList.remove('dock-open'); };
+function setPanels(dock, board) {
+  document.body.classList.toggle('dock-open', dock); document.body.classList.toggle('board-open', board);
+  $('#dockToggle').setAttribute('aria-pressed', dock); $('#boardToggle').setAttribute('aria-pressed', board);
+}
+const narrow = () => innerWidth <= 760;
+const isOpen = c => document.body.classList.contains(c);
+$('#dockToggle').onclick = () => { const d = !isOpen('dock-open'); setPanels(d, narrow() && d ? false : isOpen('board-open')); };
+$('#boardToggle').onclick = () => { const b = !isOpen('board-open'); setPanels(narrow() && b ? false : isOpen('dock-open'), b); };
+setPanels(!narrow(), !narrow());
 
 (async function initXR() {
   const b = $('#xrBtn');

@@ -1,5 +1,5 @@
 // Kerbside service worker: caches the app shell only. Race data is always fetched fresh.
-const CACHE = 'kerbside-v8';
+const CACHE = 'kerbside-v10';
 const TILES = 'kerbside-tiles';
 const TILE_HOSTS = ['server.arcgisonline.com', 'api.maptiler.com', 'raw.githubusercontent.com'];
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
