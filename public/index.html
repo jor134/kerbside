@@ -6,6 +6,23 @@
 <title>Kerbside</title>
 <meta name="description" content="Race positions on a model of the circuit, in your room.">
 <meta name="theme-color" content="#20262B">
+<script>
+// Recovery: open the site with ?reset to clear the offline copy and start fresh.
+if (/[?&]reset\b/.test(location.search)) {
+  Promise.all([
+    navigator.serviceWorker ? navigator.serviceWorker.getRegistrations().then(rs => Promise.all(rs.map(r => r.unregister()))) : 0,
+    window.caches ? caches.keys().then(ks => Promise.all(ks.map(k => caches.delete(k)))) : 0
+  ]).finally(() => location.replace(location.pathname));
+}
+// Show startup errors on screen instead of failing silently.
+window.__kbErr = function (msg) {
+  var b = document.getElementById('kbErr');
+  if (!b) { b = document.createElement('div'); b.id = 'kbErr'; b.style.cssText = 'position:fixed;left:8px;right:8px;top:8px;z-index:99;background:#D2342B;color:#fff;font:14px/1.4 system-ui,sans-serif;padding:10px 12px;border-radius:8px;white-space:pre-wrap'; (document.body || document.documentElement).appendChild(b); }
+  b.textContent = 'Kerbside error: ' + msg + '\nOpen this page with ?reset at the end of the address to clear the saved copy.';
+};
+window.addEventListener('error', function (e) { window.__kbErr((e.message || 'unknown') + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : '')); });
+window.addEventListener('unhandledrejection', function (e) { var r = e.reason; if (r && /openf1|relay|imagery|outline/i.test(String(r.message || r))) return; });
+</script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -209,6 +226,7 @@ body:not(.board-open) #board{display:none}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 'use strict';
+if (typeof THREE === 'undefined') { window.__kbErr('The 3D library (three.js) did not load. Check the connection and reload.'); throw new Error('three.js missing'); }
 /* ================= Basics ================= */
 const $ = s => document.querySelector(s);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -219,6 +237,10 @@ const store = {
   set(k, v) { try { localStorage.setItem('kerbside:' + k, JSON.stringify(v)); } catch (e) {} },
   del(k) { try { localStorage.removeItem('kerbside:' + k); } catch (e) {} }
 };
+if (!store.get('defaultsV2', false)) {
+  if (store.get('sat', 'esri') !== 'maptiler') store.set('sat', 'esri');
+  store.set('drawTrack', false); store.set('scenery', false); store.set('defaultsV2', true);
+}
 let toastTimer;
 function toast(msg, ms = 4500) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
@@ -578,7 +600,7 @@ let modelTrack = null, realTrack = null, slab = null, modelTrackMode = null;
 function setTrack(tr) {
   App.track = tr;
   if (realTrack) realWorld.remove(realTrack);
-  realTrack = onLayer(buildTrackMeshes(tr, 7, 0.03), REAL); realWorld.add(realTrack); realTrack.visible = App.drawTrack;
+  realTrack = onLayer(buildTrackMeshes(tr, 7, 0.03), REAL); realWorld.add(realTrack); realTrack.visible = trackShown();
   modelTrackMode = null; rebuildModelTrack();
   computeViewpoints(tr);
   orbit.target.set(0, 0, 0);
@@ -599,7 +621,7 @@ function rebuildModelTrack() {
   if (slab) modelGroup.remove(slab);
   const hw = mode === 'real' ? 7 : Math.max(7, tr.extent * 0.0034);
   const lift = mode === 'real' ? 0.03 : tr.extent * 0.0004;
-  modelTrack = buildTrackMeshes(tr, hw, lift); modelGroup.add(modelTrack); modelTrack.visible = App.drawTrack;
+  modelTrack = buildTrackMeshes(tr, hw, lift); modelGroup.add(modelTrack); modelTrack.visible = trackShown();
   const thick = 0.025 * tr.extent / TABLE_SIZE, mw = tr.w + tr.extent * 0.1, md = tr.d + tr.extent * 0.1;
   slab = new THREE.Mesh(new THREE.BoxGeometry(mw, thick, md), [slabEdgeMat, slabEdgeMat, slabMat, slabEdgeMat, slabEdgeMat, slabEdgeMat]);
   slab.position.y = -thick / 2 - tr.extent * 0.0006; slab.userData.thick = thick;
@@ -709,11 +731,13 @@ function buildScenery(tr) {
   return { model: make(), real: make() };
 }
 
-App.scenery = store.get('scenery', true);
-App.drawTrack = store.get('drawTrack', true);
+App.scenery = store.get('scenery', false);
+App.drawTrack = store.get('drawTrack', false);
+function trackShown() { return App.drawTrack || SAT.failed; }
+function applyTrackVis() { const v = trackShown(); if (modelTrack) modelTrack.visible = v; if (realTrack) realTrack.visible = v; }
 function setDrawTrack(on) {
   App.drawTrack = on; store.set('drawTrack', on);
-  if (modelTrack) modelTrack.visible = on; if (realTrack) realTrack.visible = on;
+  applyTrackVis();
   const cb = document.getElementById('trackChk'); if (cb) cb.checked = on;
   App.uiDirty = true; if (renderer.xr.isPresenting) drawXRPanel();
 }
@@ -744,7 +768,7 @@ function clearSatellite() {
   SAT.gen++;
   if (SAT.mesh) { modelGroup.remove(SAT.mesh); realWorld.remove(SAT.realMesh); SAT.mesh.geometry.dispose(); SAT.tex.dispose(); SAT.mesh.material.dispose(); }
   if (SAT.skirt) { modelGroup.remove(SAT.skirt); SAT.skirt.geometry.dispose(); SAT.skirt = null; }
-  SAT.mesh = SAT.realMesh = SAT.tex = null;
+  SAT.mesh = SAT.realMesh = SAT.tex = null; SAT.failed = false; applyTrackVis();
   setAttrib('');
 }
 function reloadSatellite() { clearSatellite(); if (App.track) loadSatellite(App.track); }
@@ -876,11 +900,11 @@ function skirtGeo(pos, SEG) { // basswood sides from the terrain edge down to th
   return g;
 }
 async function loadSatellite(tr) {
-  const srcKey = store.get('sat', 'off'), src = SAT_SRC[srcKey];
+  const srcKey = store.get('sat', 'esri'), src = SAT_SRC[srcKey];
   $('#satHint').textContent = '';
-  if (!src) return;
+  if (!src) { SAT.failed = true; applyTrackVis(); return; }
   const key = store.get('mtKey', '');
-  if (srcKey === 'maptiler' && !key) { $('#satHint').textContent = 'Add your MapTiler key to load imagery.'; return; }
+  if (srcKey === 'maptiler' && !key) { $('#satHint').textContent = 'Add your MapTiler key to load imagery.'; SAT.failed = true; applyTrackVis(); return; }
   const gen = SAT.gen;
   try {
     $('#satHint').textContent = 'Lining up satellite imagery…';
@@ -947,7 +971,8 @@ async function loadSatellite(tr) {
   } catch (e) {
     if (gen !== SAT.gen) return;
     $('#satHint').textContent = 'Satellite unavailable: ' + e.message + '.';
-    toast('Satellite imagery: ' + e.message + '. Showing plain green instead.', 7000);
+    SAT.failed = true; applyTrackVis();
+    toast('Satellite imagery: ' + e.message + '. Showing the drawn track on green instead.', 7000);
   }
 }
 
@@ -1382,7 +1407,7 @@ function pchipSlope(a, k) {
 function placeOnTrack(car, s, lat) {
   const tr = App.track, i = tr.at(s / tr.length, vP, tanP);
   car.pos.copy(vP).addScaledVector(tr.nrm[i], lat);
-  car.mpos.copy(vP).addScaledVector(tr.nrm[i], lat * (App.drawTrack ? (App.latK || 1) : 1));
+  car.mpos.copy(vP).addScaledVector(tr.nrm[i], lat * (trackShown() ? (App.latK || 1) : 1));
   car.pos.y = car.mpos.y = vP.y;
   car.targetHead = Math.atan2(tanP.x, tanP.z);
   car.idx = i;
@@ -1430,7 +1455,8 @@ function updateCars(dt) {
       car.valid = smoothPos(car, rt);
       if (car.valid && car.targetHead != null) {
         let d = car.targetHead - car.head;
-        while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI;
+        if (!isFinite(d)) d = 0;
+        d = ((d + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
         car.head += d * Math.min(1, dt * 14);
       }
     }
@@ -1882,7 +1908,9 @@ function drawBoard() {
 
 /* ================= Main loop ================= */
 let frameNo = 0;
-renderer.setAnimationLoop((time, frame) => {
+let frameErrShown = false;
+renderer.setAnimationLoop((time, frame) => { try { frameBody(time, frame); } catch (err) { if (!frameErrShown) { frameErrShown = true; window.__kbErr(err.message + ' (in the render loop)'); console.error(err); } } });
+function frameBody(time, frame) {
   const now = performance.now(), dt = Math.min(0.1, App.lastT ? (now - App.lastT) / 1000 : 0.016); App.lastT = now; frameNo++;
   if (App.source === 'replay') Replay.tick(dt);
   if (App.source === 'live') Live.tick();
@@ -1914,7 +1942,7 @@ renderer.setAnimationLoop((time, frame) => {
       renderer.render(scene, cam); scene.fog = fog;
     } else renderer.render(scene, camera);
   }
-});
+}
 
 /* ================= Wiring ================= */
 let sessions = [];
@@ -1965,13 +1993,13 @@ App.topRotate = store.get('topRot', false); $('#topRot').checked = App.topRotate
 $('#topRot').onchange = e => { App.topRotate = e.target.checked; store.set('topRot', App.topRotate); };
 $('#vpBtn').onclick = nextViewpoint;
 $('#skyChk').onchange = e => { App.sky = e.target.checked; layoutModel(); };
-$('#satSel').value = store.get('sat', 'off'); $('#mtKey').value = store.get('mtKey', '');
+$('#satSel').value = store.get('sat', 'esri'); $('#mtKey').value = store.get('mtKey', '');
 $('#mtKeyWrap').hidden = $('#satSel').value !== 'maptiler';
 $('#sceneryChk').checked = App.scenery;
 $('#sceneryChk').onchange = e => setScenery(e.target.checked);
 $('#trackChk').checked = App.drawTrack;
 $('#trackChk').onchange = e => setDrawTrack(e.target.checked);
-$('#satSel').onchange = e => { if (e.target.value !== 'off' && store.get('sat', 'off') === 'off') setScenery(false); store.set('sat', e.target.value); $('#mtKeyWrap').hidden = e.target.value !== 'maptiler'; reloadSatellite(); };
+$('#satSel').onchange = e => { if (e.target.value !== 'off' && store.get('sat', 'esri') === 'off') setScenery(false); store.set('sat', e.target.value); $('#mtKeyWrap').hidden = e.target.value !== 'maptiler'; reloadSatellite(); };
 $('#mtKey').onchange = e => { store.set('mtKey', e.target.value.trim()); if ($('#satSel').value === 'maptiler') reloadSatellite(); };
 $('#forceEst').onchange = e => { App.forceEst = e.target.checked; };
 document.querySelectorAll('.delay button').forEach(b => b.onclick = () => setDelay(Live.delay + +b.dataset.d));
