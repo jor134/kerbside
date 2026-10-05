@@ -537,11 +537,13 @@ function carMesh(color) {
   return g;
 }
 function labelSprite(tla, color) {
-  const cv = document.createElement('canvas'); cv.width = 128; cv.height = 56; const x = cv.getContext('2d');
-  x.fillStyle = 'rgba(32,38,43,0.92)'; x.fillRect(0, 0, 128, 56);
-  x.fillStyle = color; x.fillRect(0, 0, 12, 56);
-  x.fillStyle = '#E9E6DF'; x.font = '700 38px "Barlow Condensed", sans-serif'; x.textBaseline = 'middle'; x.fillText(tla, 22, 30);
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv) }));
+  // drawn at 4× resolution so the bigger labels stay crisp
+  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 224; const x = cv.getContext('2d');
+  x.fillStyle = 'rgba(32,38,43,0.92)'; x.fillRect(0, 0, 512, 224);
+  x.fillStyle = color; x.fillRect(0, 0, 48, 224);
+  x.fillStyle = '#E9E6DF'; x.font = '700 152px "Barlow Condensed", sans-serif'; x.textBaseline = 'middle'; x.fillText(tla, 88, 120);
+  const tex = new THREE.CanvasTexture(cv); tex.anisotropy = 4;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex }));
   return s;
 }
 
@@ -575,6 +577,7 @@ function resetCars() {
 }
 function panelView() { return App.view === 'chase' || App.view === 'top' || App.view === 'cockpit'; }
 App.carScale = store.get('carScale', 'auto');
+const LABEL_SIZE = 2.5; // label size relative to the original
 function labelLen() { return App.track ? App.track.extent * 0.012 : CAR_LEN; }
 function modelCarLen() {
   if (App.view === 'trackside' || !App.track) return CAR_LEN;
@@ -591,7 +594,7 @@ function setCarScale(v) {
 function applyCarScale(car) {
   const L = modelCarLen(), k = L / CAR_LEN;
   car.model.scale.setScalar(k);
-  const LL = labelLen(); car.label.scale.set(LL * 1.25, LL * 0.55, 1);
+  const LL = labelLen() * LABEL_SIZE; car.label.scale.set(LL * 1.25, LL * 0.55, 1);
 }
 function pushSamples(car, list) {
   const s = car.samples;
@@ -1485,7 +1488,7 @@ function updateCars(dt) {
     if (!v) continue;
     car.model.position.copy(car.mpos); car.model.rotation.y = car.head;
     car.real.position.copy(car.pos); car.real.rotation.y = car.head;
-    car.label.position.set(car.mpos.x, car.mpos.y + L * 0.6 + labelLen() * 0.55, car.mpos.z);
+    car.label.position.set(car.mpos.x, car.mpos.y + L * 0.6 + labelLen() * LABEL_SIZE * 0.4, car.mpos.z);
   }
 }
 
