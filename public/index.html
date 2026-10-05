@@ -2067,7 +2067,7 @@ const narrow = () => innerWidth <= 760;
 const isOpen = c => document.body.classList.contains(c);
 $('#dockToggle').onclick = () => { const d = !isOpen('dock-open'); setPanels(d, narrow() && d ? false : isOpen('board-open')); };
 $('#boardToggle').onclick = () => { const b = !isOpen('board-open'); setPanels(narrow() && b ? false : isOpen('dock-open'), b); };
-setPanels(!narrow(), !narrow());
+setPanels(true, !narrow()); // menu open on every screen size; on phones the order panel starts closed so they don't overlap
 
 (async function initXR() {
   const b = $('#xrBtn');
