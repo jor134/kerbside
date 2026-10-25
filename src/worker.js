@@ -1,4 +1,5 @@
 // Kerbside relay: holds one connection to F1 live timing and fans it out to viewers.
+// Also keeps a shared store of circuit outlines, so every device can draw the track during a live session.
 import { DurableObject } from 'cloudflare:workers';
 
 const RS = '\x1e';
@@ -8,13 +9,14 @@ const TOPICS = [
   'SessionInfo', 'SessionStatus', 'TrackStatus', 'LapCount',
   'RaceControlMessages', 'ExtrapolatedClock', 'WeatherData'
 ];
-const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' };
+const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS' };
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
-    if (env.RELAY_KEY && url.searchParams.get('key') !== env.RELAY_KEY) {
+    const keys = String(env.RELAY_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
+    if (keys.length && !keys.includes(url.searchParams.get('key'))) {
       return new Response('Wrong or missing relay key', { status: 401, headers: CORS });
     }
     const stub = env.RELAY.get(env.RELAY.idFromName('live'));
@@ -24,11 +26,13 @@ export default {
       }
       return stub.fetch(request);
     }
-    if (url.pathname === '/status') {
-      const r = await stub.fetch(new Request(url.origin + '/status'));
-      return new Response(r.body, { headers: { ...CORS, 'content-type': 'application/json' } });
+    if (url.pathname === '/status' || url.pathname === '/track') {
+      const r = await stub.fetch(new Request(url.origin + url.pathname + url.search, {
+        method: request.method, body: request.method === 'PUT' ? await request.text() : undefined
+      }));
+      return new Response(r.body, { status: r.status, headers: { ...CORS, 'content-type': 'application/json', 'cache-control': 'no-store' } });
     }
-    return new Response('Kerbside relay is running. Connect to /ws or check /status.', { headers: CORS });
+    return new Response('Kerbside relay is running.', { headers: CORS });
   }
 };
 
@@ -72,9 +76,15 @@ function cookiesFrom(resp) {
   return list.map(c => c.split(';')[0]).filter(Boolean).join('; ');
 }
 
+function validOutline(a) {
+  return Array.isArray(a) && a.length >= 60 && a.length <= 8000 &&
+    a.every(p => Array.isArray(p) && p.length === 3 && p.every(n => typeof n === 'number' && isFinite(n) && Math.abs(n) < 1e6));
+}
+
 export class F1Relay extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
+    this.ctx = ctx;
     this.env = env;
     this.clients = new Set();
     this.upstream = null;
@@ -120,9 +130,25 @@ export class F1Relay extends DurableObject {
     }
   }
 
+  async trackRequest(request, url) {
+    const circuit = String(url.searchParams.get('circuit') || '').replace(/[^\w-]/g, '').slice(0, 40);
+    if (!circuit) return new Response('{"error":"missing circuit"}', { status: 400 });
+    const k = 'track:' + circuit;
+    if (request.method === 'PUT') {
+      let pts;
+      try { pts = JSON.parse(await request.text()); } catch (e) { return new Response('{"error":"bad json"}', { status: 400 }); }
+      if (!validOutline(pts)) return new Response('{"error":"bad outline"}', { status: 400 });
+      await this.ctx.storage.put(k, pts);
+      return new Response('{"ok":true}');
+    }
+    const pts = await this.ctx.storage.get(k);
+    return pts ? new Response(JSON.stringify(pts)) : new Response('{"error":"not found"}', { status: 404 });
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === '/status') return Response.json(this.statusObj());
+    if (url.pathname === '/track') return this.trackRequest(request, url);
 
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
