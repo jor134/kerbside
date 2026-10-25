@@ -384,10 +384,39 @@ class Track {
     return [best, Math.sqrt(bd)];
   }
 }
+function packTrack(tr) { return tr.raw.map(p => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, Math.round(p.z * 10) / 10]); }
 function cacheTrack(tr) {
   if (tr.circuitKey == null) return;
-  store.set('track:' + tr.circuitKey, tr.raw.map(p => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, Math.round(p.z * 10) / 10]));
+  store.set('track:' + tr.circuitKey, packTrack(tr));
 }
+// The relay keeps one copy of each circuit outline, so a device that has never seen a circuit
+// can still draw it during a live session, when OpenF1's free data is locked.
+function relayInfo() {
+  const key = store.get('relayKey', '') || ($('#relayKey') && $('#relayKey').value.trim());
+  if (!key) return null;
+  const base = (store.get('relayUrl', '') || location.origin).replace(/\/+$/, '');
+  return /^https?:/.test(base) ? { base, key } : null;
+}
+const sharedTried = new Set();
+async function sharedTrack(circuitKey) {
+  const r = relayInfo(); if (!r || circuitKey == null) return null;
+  try {
+    const res = await fetch(`${r.base}/track?circuit=${encodeURIComponent(circuitKey)}&key=${encodeURIComponent(r.key)}`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const a = await res.json();
+    const tr = new Track(a.map(p => ({ x: p[0], y: p[1], z: p[2] })), circuitKey);
+    store.set('track:' + circuitKey, a);
+    sharedTried.add(String(circuitKey));
+    return tr;
+  } catch (e) { return null; }
+}
+function shareTrack(tr) {
+  const r = relayInfo(); if (!r || tr.circuitKey == null || sharedTried.has(String(tr.circuitKey))) return;
+  sharedTried.add(String(tr.circuitKey));
+  fetch(`${r.base}/track?circuit=${encodeURIComponent(tr.circuitKey)}&key=${encodeURIComponent(r.key)}`,
+    { method: 'PUT', body: JSON.stringify(packTrack(tr)), headers: { 'content-type': 'application/json' } }).catch(() => {});
+}
+function forgetSharedTrack(circuitKey) { sharedTried.delete(String(circuitKey)); }
 function cachedTrack(key) {
   const a = store.get('track:' + key, null);
   if (!a) return null;
@@ -411,6 +440,8 @@ async function outlineFromSession(sk, laps) {
 async function trackForCircuit(key, excludeSk) {
   const c = cachedTrack(key);
   if (c) return c;
+  const shared = await sharedTrack(key);
+  if (shared) return shared;
   const sessions = (await OF1.get(`/sessions?circuit_key=${key}`))
     .filter(s => s.session_key !== excludeSk && isoMs(s.date_end) < Date.now() - 2 * 3600e3)
     .sort((a, b) => isoMs(b.date_start) - isoMs(a.date_start));
@@ -621,6 +652,7 @@ function samplePos(car, t, out) {
 let modelTrack = null, realTrack = null, slab = null, modelTrackMode = null;
 function setTrack(tr) {
   App.track = tr;
+  shareTrack(tr);
   if (realTrack) realWorld.remove(realTrack);
   realTrack = onLayer(buildTrackMeshes(tr, 7, 0.03), REAL); realWorld.add(realTrack); realTrack.visible = trackShown();
   modelTrackMode = null; rebuildModelTrack();
@@ -1057,7 +1089,7 @@ const Replay = {
         this.laps.get(k).push({ t: isoMs(l.date_start), lap: l.lap_number });
       }
       for (const a of this.laps.values()) a.sort((x, y) => x.t - y.t);
-      let tr = cachedTrack(sess.circuit_key);
+      let tr = cachedTrack(sess.circuit_key) || await sharedTrack(sess.circuit_key);
       if (!tr) { const raw = await outlineFromSession(sk, laps); if (raw) { tr = new Track(raw, sess.circuit_key); cacheTrack(tr); } }
       if (gen !== this.gen) return;
       if (!tr) throw new Error('No lap data to draw this circuit. Try a different session at the same track.');
@@ -1158,11 +1190,29 @@ const Replay = {
 };
 
 /* ================= Live ================= */
+// Car positions arrive compressed. Older Safari versions can't unpack this format natively,
+// so the app falls back to a small library (loaded only if needed).
+let nativeInflate = typeof DecompressionStream !== 'undefined', pakoLoading = null;
+function loadPako() {
+  if (window.pako) return Promise.resolve();
+  return pakoLoading || (pakoLoading = new Promise((res, rej) => {
+    const sc = document.createElement('script');
+    sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako_inflate.min.js';
+    sc.onload = res; sc.onerror = () => { pakoLoading = null; rej(new Error('could not load decompressor')); };
+    document.head.appendChild(sc);
+  }));
+}
 async function inflateB64(b64) {
   const bin = atob(b64), bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-  return JSON.parse(await new Response(stream).text());
+  if (nativeInflate) {
+    try {
+      const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      return JSON.parse(await new Response(stream).text());
+    } catch (e) { nativeInflate = false; }
+  }
+  await loadPako();
+  return JSON.parse(window.pako.inflateRaw(bytes, { to: 'string' }));
 }
 const TRACK_STATUS = {
   '1': ['Track clear', '#4F7D45'], '2': ['Yellow flag', '#F2B233'], '4': ['Safety car', '#F2B233'],
@@ -1218,7 +1268,9 @@ const Live = {
   sessionName() { const si = this.state.SessionInfo; return si ? [si.Meeting && si.Meeting.Name, si.Name].filter(Boolean).join(', ') : 'waiting for session'; },
   handleZ(topic, b64) {
     if (topic !== 'Position.z' || typeof b64 !== 'string') return;
-    this.zChain = this.zChain.then(() => inflateB64(b64)).then(obj => this.ingest(obj)).catch(() => {});
+    this.zChain = this.zChain.then(() => inflateB64(b64)).then(obj => this.ingest(obj)).catch(e => {
+      if (!this.zErr) { this.zErr = true; toast('Could not read live car positions on this device (' + e.message + ').', 8000); }
+    });
   },
   ingest(obj) {
     const by = new Map(); let latest = 0;
@@ -1264,9 +1316,10 @@ const Live = {
     try {
       const tr = await trackForCircuit(key);
       if (tr && this.circuitKey === key) { setTrack(tr); }
-      else if (!tr) toast('No saved outline for this circuit. Drawing it from the leader’s first full lap instead.', 7000);
+      else if (!tr) { this.noOutline = true; toast('No outline for this circuit yet. Drawing it from the leader’s first full lap.', 7000); }
     } catch (e) {
-      toast('Could not fetch the circuit outline (' + e.message + '). Drawing it from live positions instead.', 7000);
+      this.noOutline = true;
+      toast('Circuit outline unavailable right now (' + e.message + '). Drawing it from the leader’s first full lap.', 7000);
     } finally { this.trackLoading = false; }
   },
   isRace() { const si = this.state.SessionInfo || {}; return si.Type === 'Race'; },
@@ -1289,11 +1342,14 @@ const Live = {
       const lo = this.renderTime() - 30000;
       for (const c of Cars.values()) if (c.samples.length && c.samples[0].t < lo) { const i = lastLE(c.samples, lo, 't'); if (i > 0) { c.samples.splice(0, i); c.procDirty = true; } }
       if (gps) this.checkTrack();
+      else if (!App.track && !this.trackLoading && this.circuitKey != null)
+        setStatus('Live: no circuit outline on this device and no live car positions to draw one from');
     }
   },
   checkTrack() {
     const tr = App.track;
     if (!tr) { if (!this.trackLoading) this.buildTrail(); return; }
+    this.noOutline = false;
     const ds = [];
     for (const c of Cars.values()) {
       const s = c.samples[c.samples.length - 1]; if (!s) continue;
@@ -1304,7 +1360,7 @@ const Live = {
     ds.sort((a, b) => a - b);
     if (ds[ds.length >> 1] > 120) this.mismatch++; else this.mismatch = 0;
     if (this.mismatch >= 3) {
-      this.mismatch = 0; store.del('track:' + tr.circuitKey);
+      this.mismatch = 0; store.del('track:' + tr.circuitKey); forgetSharedTrack(tr.circuitKey);
       App.track = null;
       toast('The saved outline doesn’t match this layout. Redrawing it from the leader’s lap.', 7000);
     }

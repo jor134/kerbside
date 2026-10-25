@@ -1,6 +1,6 @@
 // Kerbside service worker: keeps an offline copy of the app shell and satellite tiles.
 // The page itself is always fetched fresh when online, so a stale copy can't break a new version.
-const CACHE = 'kerbside-v18';
+const CACHE = 'kerbside-v19';
 const TILES = 'kerbside-tiles';
 const TILE_HOSTS = ['server.arcgisonline.com', 'api.maptiler.com', 'raw.githubusercontent.com'];
 const SHELL = ['manifest.webmanifest', 'icon-192.png', 'icon-512.png',
@@ -22,7 +22,7 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET') return;
   if (url.hostname.includes('openf1.org')) return;
-  if (url.origin === location.origin && (url.pathname === '/ws' || url.pathname === '/status' || url.search.includes('reset'))) return;
+  if (url.origin === location.origin && (url.pathname === '/ws' || url.pathname === '/status' || url.pathname === '/track' || url.search.includes('reset'))) return;
   if (TILE_HOSTS.includes(url.hostname)) {
     e.respondWith(caches.open(TILES).then(c => c.match(e.request).then(hit => hit || fetch(e.request).then(r => { if (r.ok) c.put(e.request, r.clone()); return r; }))));
     return;
