@@ -10,6 +10,7 @@ src/worker.js
 public/index.html
 public/drive.js
 public/hang.js
+public/garage.js
 public/sw.js
 public/manifest.webmanifest
 public/icon-192.png
@@ -45,6 +46,15 @@ public/icon-512.png
 - The host's choice of replay or live is followed by everyone with "Follow what the host watches" ticked. Live uses each person's own broadcast delay.
 - Join before entering the headset: the microphone prompt can't appear inside it. In the headset, X on the left controller mutes and unmutes.
 - Use headphones: microphones pick up your TV otherwise.
+
+### Pit garage
+
+Under View → Surroundings, choose **Pit garage** for a fully virtual team garage built around the circuit table, with the pit lane, pit wall and a grandstand out of the open front and a timing monitor on the gantry. On an iPad or phone it's the background behind the table.
+
+- In the headset, place the table first (you see your real room while placing), then the garage forms around it. Turning the table doesn't turn the garage; **Turn garage** on the headset panel does.
+- Your F1 TV browser window can float anywhere over it, as usual in the Quest browser.
+- **TV window** cuts a window through the garage to your real room, so you can watch your real TV. **Place window**: point at the TV and pull the trigger. **Size** cycles small, medium and large. Needs mixed reality (passthrough).
+- In a hangout, the host's choice of surroundings applies to everyone. The TV window stays personal.
 
 ### Voice on every network (Cloudflare TURN)
 
