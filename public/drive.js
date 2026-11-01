@@ -182,7 +182,40 @@ function makeSim(THREE) {
     return clamp(-delta / PH.steerMax(Math.abs(c.v)), -1, 1);
   }
 
-  return { PH, HW, LIMIT, clamp, wrapA, wrapD, trackY, poseAt, buildProfile, profIdx, newCar, stepCar, stepAI, collide, autoSteer };
+  // Braking corners: the slow points of the speed profile that need a real brake from the straight before.
+  // Turn-in is where the corner starts to bend; distance boards count down to it.
+  function findCorners(tr, P) {
+    const N = tr.N, seg = P.seg, L = tr.length, win = Math.max(2, Math.round(80 / seg)), back = Math.round(400 / seg);
+    const found = [];
+    for (let i = 0; i < N; i++) {
+      const v = P.vmax[i];
+      let isMin = true;
+      for (let k = 1; k <= win && isMin; k++) if (P.vmax[(i + k) % N] < v || P.vmax[(i - k + N) % N] < v) isMin = false;
+      if (!isMin) continue;
+      let entry = 0; for (let k = 1; k <= back; k++) entry = Math.max(entry, P.vmax[(i - k + N) % N]);
+      if (entry - v < 12) continue; // under about 45 km/h of braking: a lift, not a braking zone
+      const prev = found[found.length - 1];
+      if (prev && (i - prev.i) * seg < 120) { if (v < prev.v) found[found.length - 1] = { i, v, entry }; continue; }
+      found.push({ i, v, entry });
+    }
+    if (found.length > 1) { const a = found[0], z = found[found.length - 1]; if ((a.i + N - z.i) * seg < 120) { if (a.v <= z.v) found.pop(); else found.shift(); } }
+    return found.map(c => {
+      const th = P.kap[c.i] * 0.3; let j = c.i, steps = 0;
+      while (steps < 200 / seg && P.kap[(j - 1 + N) % N] > th) { j--; steps++; }
+      return { apexS: c.i * seg, turnS: ((j * seg) % L + L) % L, side: -(Math.sign(tr.curv[c.i]) || 1), entry: c.entry, apexV: c.v };
+    });
+  }
+  function boardSpots(tr, P) {
+    const cs = findCorners(tr, P), L = tr.length, out = [];
+    cs.forEach((c, k) => {
+      const prev = cs[(k - 1 + cs.length) % cs.length];
+      const room = cs.length > 1 ? ((c.turnS - prev.apexS) % L + L) % L : L;
+      for (const d of [200, 100, 50]) if (d + 40 < room) out.push({ s: c.turnS - d, side: c.side, n: d });
+    });
+    return { corners: cs, spots: out };
+  }
+
+  return { PH, HW, LIMIT, clamp, wrapA, wrapD, trackY, poseAt, buildProfile, profIdx, newCar, stepCar, stepAI, collide, autoSteer, findCorners, boardSpots };
 }
 window.KBDriveSim = makeSim;
 if (!window.KB) return; // loaded for testing only
@@ -205,7 +238,7 @@ const AI_COLORS = ['#2E6FD9', '#F28A1E', '#2BB5A0', '#C9CED3', '#2F8F4E', '#E66B
 const cfg = Object.assign({
   type: 'tt', laps: 3, pace: 85, rivals: 9, skill: 88, gridPos: 'back', view: 'chase',
   touch: 'tilt', tiltInv: false, quest: 'wheel', autoThrottle: false, brakeAssist: false, steerAssist: false,
-  color: '#D2342B', sound: true, ownGhost: true, comfort: 'medium', name: ''
+  color: '#D2342B', sound: true, ownGhost: true, comfort: 'medium', name: '', drawTrack: true, boards: true
 }, store.get('drive:cfg', {}));
 const saveCfg = () => store.set('drive:cfg', cfg);
 
@@ -251,6 +284,59 @@ function placeMesh(ent, x, y, z, h, visible) {
     ent.label.position.set(x, y + KB.modelCarLen() * 0.6 + LL * 0.4, z);
   }
 }
+
+/* ---------------- Braking distance boards (200, 100, 50 m before each braking corner) ---------------- */
+const boardTex = {};
+function boardTexture(n) {
+  if (boardTex[n]) return boardTex[n];
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 160; const x = cv.getContext('2d');
+  x.fillStyle = '#F4F3EE'; x.fillRect(0, 0, 256, 160);
+  x.lineWidth = 10; x.strokeStyle = '#1C1F22'; x.strokeRect(5, 5, 246, 150);
+  x.fillStyle = '#1C1F22'; x.font = '700 112px "Barlow Condensed", Arial, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText(String(n), 128, 86);
+  const t = new THREE.CanvasTexture(cv); t.anisotropy = 4; return (boardTex[n] = t);
+}
+const boardFaceGeo = new THREE.PlaneGeometry(1.6, 1.0), boardBackGeo = new THREE.BoxGeometry(1.7, 1.1, 0.06), postGeo = new THREE.BoxGeometry(0.1, 1.4, 0.1);
+const boardDarkMat = new THREE.MeshToonMaterial({ color: 0x2a2f33 });
+function boardMesh(n) {
+  const g = new THREE.Group();
+  const face = new THREE.Mesh(boardFaceGeo, new THREE.MeshBasicMaterial({ map: boardTexture(n) })); face.position.set(0, 1.9, 0.035);
+  const back = new THREE.Mesh(boardBackGeo, boardDarkMat); back.position.y = 1.9;
+  const post = new THREE.Mesh(postGeo, boardDarkMat); post.position.y = 0.7;
+  g.add(back, face, post); return g;
+}
+function buildBoards(tr) {
+  if (D.boards) { KB.modelGroup.remove(D.boards.model); KB.realWorld.remove(D.boards.real); }
+  const { spots } = Sim.boardSpots(tr, D.prof);
+  const model = new THREE.Group(), real = new THREE.Group();
+  for (const sp of spots) { model.add(boardMesh(sp.n)); real.add(boardMesh(sp.n)); }
+  KB.onLayer(real, KB.REAL);
+  KB.modelGroup.add(model); KB.realWorld.add(real);
+  D.boards = { spots, model, real, key: null };
+  layoutBoards(true);
+}
+const bPos = new THREE.Vector3();
+function layoutBoards(force) {
+  const B = D.boards, tr = D.track; if (!B || !tr) return;
+  const show = D.active && cfg.boards;
+  B.model.visible = B.real.visible = show;
+  if (!show) return;
+  // In the table view the boards grow with the cars and sit just off the wider model track.
+  const full = fullSizeXR() || D.view !== 'rc', k = full ? 1 : KB.modelCarLen() / KB.CAR_LEN;
+  const hw = full ? Sim.HW : Sim.HW * (cfg.drawTrack ? (App.latK || 1) : 1);
+  const key = k.toFixed(3) + '|' + hw.toFixed(2);
+  if (!force && key === B.key) return;
+  B.key = key;
+  const put = (grp, kk, hww) => B.spots.forEach((sp, i) => {
+    const o = grp.children[i], pose = Sim.poseAt(tr, sp.s, sp.side * (hww + 1.5 + 0.9 * kk), bPos);
+    o.position.set(bPos.x, Sim.trackY(tr, sp.s), bPos.z);
+    o.rotation.set(0, pose.yaw + Math.PI, 0); // face the cars coming towards them
+    o.scale.setScalar(kk);
+  });
+  put(B.model, k, hw); put(B.real, 1, Sim.HW);
+}
+function setDrawTrack(on) { cfg.drawTrack = on; saveCfg(); App.trackOverride = on; KB.applyTrackVis(); layoutBoards(true); }
+function setBoards(on) { cfg.boards = on; saveCfg(); layoutBoards(true); }
 
 /* ---------------- Engine sound ---------------- */
 const Snd = {
@@ -534,6 +620,7 @@ function setDriveTrack(tr, name) {
   if (name) D.trackName = name;
   const b = store.get('drive:best:' + tr.circuitKey + ':' + Math.round(tr.length), null);
   D.ttBest = b ? b.time : null; D.ownGhost = b && b.ghost ? b : null;
+  buildBoards(tr);
   UI.refresh && UI.refresh();
 }
 async function loadCircuitFor(sess) {
@@ -749,6 +836,7 @@ function applyViewMode() {
     KB.layoutModel();
     if (renderer.xr.isPresenting) for (const c of KB.controllers) c.userData.line.visible = true;
   }
+  layoutBoards();
 }
 function setView(v) {
   D.view = v; cfg.view = v; saveCfg(); camInit = false;
@@ -854,7 +942,9 @@ function drawXrMenu() {
     y += 108;
     c.fillStyle = '#94A1A8'; c.fillText('Steering', 32, y - 8);
     x = 32;
-    for (const [v, l] of [['wheel', 'Wheel (both hands)'], ['stick', 'Thumbstick']]) { btn(x, y, 300, l, cfg.quest === v, () => { cfg.quest = v; saveCfg(); }); x += 314; }
+    for (const [v, l] of [['wheel', 'Wheel (both hands)'], ['stick', 'Thumbstick']]) { btn(x, y, 270, l, cfg.quest === v, () => { cfg.quest = v; saveCfg(); }); x += 282; }
+    btn(x, y, 196, cfg.drawTrack ? 'Track: on' : 'Track: off', cfg.drawTrack, () => setDrawTrack(!cfg.drawTrack)); x += 208;
+    btn(x, y, 196, cfg.boards ? 'Boards: on' : 'Boards: off', cfg.boards, () => setBoards(!cfg.boards));
     y += 108;
     c.fillStyle = '#94A1A8'; c.fillText('Assists and comfort', 32, y - 8);
     x = 32;
@@ -1117,6 +1207,8 @@ body.driving #bar, body.driving #dock, body.driving #board, body.driving #transp
     h += `<label class="chk"><input type="checkbox" id="dBrk" ${cfg.brakeAssist ? 'checked' : ''}> Braking assist</label>`;
     h += `<label class="chk"><input type="checkbox" id="dSteer" ${cfg.steerAssist ? 'checked' : ''}> Steering assist</label>`;
     h += `<label class="chk"><input type="checkbox" id="dSound" ${cfg.sound ? 'checked' : ''}> Engine sound</label>`;
+    h += `<h4>Circuit display</h4><label class="chk"><input type="checkbox" id="dTrack" ${cfg.drawTrack ? 'checked' : ''}> Draw the track</label>`;
+    h += `<label class="chk"><input type="checkbox" id="dBoards" ${cfg.boards ? 'checked' : ''}> Braking boards (200, 100, 50 m)</label>`;
     if (!racing) h += `<h4>Your car</h4><div class="sw">${TEAM.map(([n, c]) => `<button data-col="${c}" title="${n}" style="background:${c}" class="${cfg.color === c ? 'on' : ''}"></button>`).join('')}</div>`;
     h += `<div class="row" style="margin-top:18px">`;
     if (D.paused) h += `<button class="go" id="dResume">Resume</button><button class="ghost" id="dRestart">Restart</button>`;
@@ -1154,6 +1246,8 @@ body.driving #bar, body.driving #dock, body.driving #board, body.driving #transp
     on('dBrk', 'onchange', e => { cfg.brakeAssist = e.target.checked; saveCfg(); });
     on('dSteer', 'onchange', e => { cfg.steerAssist = e.target.checked; saveCfg(); });
     on('dSound', 'onchange', e => { cfg.sound = e.target.checked; saveCfg(); if (!cfg.sound) Snd.stop(); });
+    on('dTrack', 'onchange', e => setDrawTrack(e.target.checked));
+    on('dBoards', 'onchange', e => setBoards(e.target.checked));
     m.querySelectorAll('[data-col]').forEach(b => b.onclick = () => { cfg.color = b.dataset.col; saveCfg(); if (Net.ws) Net.send({ t: 'hello', name: playerName(), color: cfg.color }); this.refresh(); });
     on('dCreate', 'onclick', () => {
       if (!D.track) { toast('Load a circuit first; the room uses it.'); return; }
@@ -1285,7 +1379,8 @@ const Drive = {
     KB.uiMesh.visible = false; KB.chaseMesh.visible = false;
     if (App.track && App.track !== D.track) setDriveTrack(App.track, (App.modeLabel || '').replace(/^(Replay|Live):\s*/, '').split(',')[0]);
     D.state = 'menu'; D.view = cfg.view; camInit = false;
-    applyViewMode();
+    App.trackOverride = cfg.drawTrack; KB.applyTrackVis(); // the viewer's own track setting is left alone
+    applyViewMode(); layoutBoards(true);
     openMenu();
     if (isTouch() && cfg.touch === 'tilt') Tilt.enable().catch(() => {});
   },
@@ -1296,6 +1391,7 @@ const Drive = {
     $('#dMenu').hidden = true; UI.hud(false); $('#dTouch').hidden = true;
     xrMenuMesh.visible = hudMesh.visible = wheel.visible = vig.visible = false;
     App.forceRealModel = false; KB.rebuildModelTrack(); KB.layoutModel();
+    App.trackOverride = null; KB.applyTrackVis(); layoutBoards(true);
     if (renderer.xr.isPresenting) { KB.uiMesh.visible = true; for (const c of KB.controllers) c.userData.line.visible = true; KB.positionPanels(); }
   },
   frame, onSelect: onSelectXR,
