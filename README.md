@@ -1,6 +1,6 @@
 # Kerbside
 
-One GitHub repo, one Cloudflare Worker. The Worker serves the app, runs the F1 live-timing relay, stores shared circuit outlines and hosts online drive races.
+One GitHub repo, one Cloudflare Worker. The Worker serves the app, runs the F1 live-timing relay, stores shared circuit outlines, and hosts online drive races and watch-together rooms.
 
 ## Repo layout
 
@@ -9,6 +9,7 @@ wrangler.toml
 src/worker.js
 public/index.html
 public/drive.js
+public/hang.js
 public/sw.js
 public/manifest.webmanifest
 public/icon-192.png
@@ -35,6 +36,26 @@ public/icon-512.png
 - **Controls:** iPad tilt or on-screen buttons with pedals; keyboard; Bluetooth game controller; Quest controllers as a wheel or thumbstick; Quest hand tracking (both hands as a wheel, pinch right for throttle, left for brake).
 - **Views:** cockpit, chase, and a table-top RC view. In the headset, cockpit and chase are full size with a comfort vignette; the table view drives a miniature car on your real table.
 - **Headset buttons:** B or Y opens the menu, pressing a thumbstick in recentres the seat.
+
+## Watch with friends (hangout and voice)
+
+"Watch with friends" in the menu loads `hang.js`. Start a room, then use **Invite** to send a link (it includes your relay key and the room code). Up to 10 people; voice works best with 6 or fewer.
+
+- Friends appear as avatars around your table in the Tabletop view: where they actually stand if they're in a headset, in a seat if they're on an iPad or phone.
+- The host's choice of replay or live is followed by everyone with "Follow what the host watches" ticked. Live uses each person's own broadcast delay.
+- Join before entering the headset: the microphone prompt can't appear inside it. In the headset, X on the left controller mutes and unmutes.
+- Use headphones: microphones pick up your TV otherwise.
+
+### Voice on every network (Cloudflare TURN)
+
+Without this, voice connects device to device and fails on some mobile, office and carrier networks.
+
+1. Cloudflare dashboard → **Realtime** (may be listed as Calls) → **TURN Server** → **Create**. Give it a name.
+2. It shows a **Turn Token ID** and an **API Token**. Copy both now; the token is only shown once.
+3. Worker `kerbside` → Settings → Variables and Secrets → add two **Secrets**: `TURN_KEY_ID` (the Turn Token ID) and `TURN_KEY_API_TOKEN` (the API Token).
+4. Check it: open `/ice?key=<RELAY_KEY>`. `"turn": true` means it's working.
+
+The first 1,000 GB of TURN traffic each month is free. A voice stream is roughly 25 MB an hour.
 
 ## Getting the F1 TV token (unverified, may change)
 

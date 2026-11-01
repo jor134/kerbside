@@ -3,8 +3,8 @@ main = "src/worker.js"
 compatibility_date = "2025-09-01"
 keep_vars = true
 
-# The app (index.html, drive.js, icons, manifest, sw.js) is served from /public.
-# Anything that isn't a file there (/ws, /status, /track, /room) goes to the Worker.
+# The app (index.html, drive.js, hang.js, icons, manifest, sw.js) is served from /public.
+# Anything that isn't a file there (/ws, /status, /track, /room, /hang, /ice) goes to the Worker.
 [assets]
 directory = "./public"
 
@@ -16,6 +16,10 @@ class_name = "F1Relay"
 name = "ROOMS"
 class_name = "RaceRoom"
 
+[[durable_objects.bindings]]
+name = "HANG"
+class_name = "HangRoom"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["F1Relay"]
@@ -23,6 +27,10 @@ new_sqlite_classes = ["F1Relay"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["RaceRoom"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["HangRoom"]
 
 [observability]
 enabled = true
