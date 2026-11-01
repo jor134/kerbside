@@ -19,6 +19,12 @@ export default {
     if (keys.length && !keys.includes(url.searchParams.get('key'))) {
       return new Response('Wrong or missing relay key', { status: 401, headers: CORS });
     }
+    if (url.pathname === '/room') { // online drive races, one room per 4-letter code
+      const code = String(url.searchParams.get('code') || '').toUpperCase();
+      if (!/^[A-Z]{4}$/.test(code)) return new Response('Room codes are 4 letters', { status: 400, headers: CORS });
+      if (request.headers.get('Upgrade') !== 'websocket') return new Response('Expected a WebSocket upgrade', { status: 426, headers: CORS });
+      return env.ROOMS.get(env.ROOMS.idFromName('room:' + code)).fetch(request);
+    }
     const stub = env.RELAY.get(env.RELAY.idFromName('live'));
     if (url.pathname === '/ws') {
       if (request.headers.get('Upgrade') !== 'websocket') {
@@ -298,6 +304,86 @@ export class F1Relay extends DurableObject {
       if (topic === 'Position.z') this.lastPosAt = Date.now();
     } else {
       this.state[topic] = merge(this.state[topic], payload);
+    }
+  }
+}
+
+// Online drive races. Relays each player's car to everyone else in the room,
+// keeps the host's circuit and settings, and stamps the start time from one clock.
+const MAX_PLAYERS = 12;
+export class RaceRoom extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.peers = new Map();
+    this.nextId = 1;
+    this.host = null;
+    this.setup = null;
+  }
+  roster() {
+    return { t: 'roster', host: this.host, peers: [...this.peers.entries()].map(([id, p]) => ({ id, name: p.name, color: p.color })) };
+  }
+  send(ws, m) { try { ws.send(typeof m === 'string' ? m : JSON.stringify(m)); } catch (e) {} }
+  broadcast(m, except) {
+    const msg = JSON.stringify(m);
+    for (const [id, p] of this.peers) if (id !== except) this.send(p.ws, msg);
+  }
+  async fetch(request) {
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    server.accept();
+    if (this.peers.size >= MAX_PLAYERS) {
+      this.send(server, { t: 'full' }); server.close(1008, 'Room is full');
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    const id = this.nextId++;
+    this.peers.set(id, { ws: server, name: 'Player ' + id, color: '#9aa5ab' });
+    if (this.host == null || !this.peers.has(this.host)) this.host = id;
+    this.send(server, { t: 'welcome', you: id, host: this.host, peers: this.roster().peers, setup: this.setup });
+    this.broadcast(this.roster(), id);
+    server.addEventListener('message', e => this.onMsg(id, e.data));
+    const leave = () => this.leave(id);
+    server.addEventListener('close', leave);
+    server.addEventListener('error', leave);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+  leave(id) {
+    if (!this.peers.delete(id)) return;
+    if (this.host === id) this.host = this.peers.size ? this.peers.keys().next().value : null;
+    if (!this.peers.size) { this.setup = null; return; }
+    this.broadcast(this.roster());
+  }
+  onMsg(id, raw) {
+    if (typeof raw !== 'string' || raw.length > 900000) return;
+    let m; try { m = JSON.parse(raw); } catch (e) { return; }
+    const p = this.peers.get(id); if (!p) return;
+    switch (m.t) {
+      case 'hello':
+        p.name = String(m.name || p.name).slice(0, 12);
+        p.color = /^#[0-9a-f]{6}$/i.test(m.color || '') ? m.color : p.color;
+        this.broadcast(this.roster());
+        break;
+      case 'ping':
+        this.send(p.ws, { t: 'pong', c: m.c, s: Date.now() });
+        break;
+      case 'setup':
+        if (id !== this.host || !m.setup) return;
+        this.setup = m.setup;
+        this.broadcast({ t: 'setup', setup: this.setup }, id);
+        break;
+      case 'start':
+        if (id !== this.host) return;
+        this.broadcast({ t: 'start', at: Date.now() + 4000, grid: [...this.peers.keys()] });
+        break;
+      case 'lobby':
+        if (id !== this.host) return;
+        this.broadcast({ t: 'lobby' });
+        break;
+      case 'state':
+        if (m.s && typeof m.s === 'object') this.broadcast({ t: 'state', id, s: m.s }, id);
+        break;
+      case 'finish':
+        this.broadcast({ t: 'finish', id, time: +m.time || 0 });
+        break;
     }
   }
 }
