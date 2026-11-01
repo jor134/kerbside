@@ -2160,7 +2160,7 @@ window.KB = {
   layoutModel, rebuildModelTrack, positionPanels, xrHead, xrForward, enterXR, placementTick, placeAtReticle,
   uiMesh, chaseMesh, controllers, applyTrackVis, getSessions: () => sessions
 };
-const DRIVE_VER = '2'; // bump whenever drive.js changes, so devices don't keep an old copy
+const DRIVE_VER = '3'; // bump whenever drive.js changes, so devices don't keep an old copy
 let driveLoading = null;
 function loadDrive() {
   if (window.KBDrive) return Promise.resolve();

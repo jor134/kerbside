@@ -223,6 +223,7 @@ if (!window.KB) return; // loaded for testing only
 /* =====================================================================
    Game: everything that touches the page, the 3D scene or the headset
    ===================================================================== */
+const DRIVE_BUILD = 3;
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const Sim = makeSim(THREE);
 const { clamp, wrapA, wrapD } = Sim;
@@ -296,18 +297,25 @@ function boardTexture(n) {
   x.fillText(String(n), 128, 86);
   const t = new THREE.CanvasTexture(cv); t.anisotropy = 4; return (boardTex[n] = t);
 }
-const boardFaceGeo = new THREE.PlaneGeometry(1.6, 1.0), boardBackGeo = new THREE.BoxGeometry(1.7, 1.1, 0.06), postGeo = new THREE.BoxGeometry(0.1, 1.4, 0.1);
+// Game-sized: about 3 × 1.9 m on two 2.4 m legs, so they read from 200 m away. The number is printed
+// on the front of a single block (no separate panel that could flicker into the backing at table scale).
+const boardGeo = new THREE.BoxGeometry(3.0, 1.9, 0.12), legGeo = new THREE.BoxGeometry(0.14, 2.4, 0.14);
 const boardDarkMat = new THREE.MeshToonMaterial({ color: 0x2a2f33 });
+const boardFaceMat = {};
 function boardMesh(n) {
+  const face = boardFaceMat[n] || (boardFaceMat[n] = new THREE.MeshBasicMaterial({ map: boardTexture(n) }));
   const g = new THREE.Group();
-  const face = new THREE.Mesh(boardFaceGeo, new THREE.MeshBasicMaterial({ map: boardTexture(n) })); face.position.set(0, 1.9, 0.035);
-  const back = new THREE.Mesh(boardBackGeo, boardDarkMat); back.position.y = 1.9;
-  const post = new THREE.Mesh(postGeo, boardDarkMat); post.position.y = 0.7;
-  g.add(back, face, post); return g;
+  const panel = new THREE.Mesh(boardGeo, [boardDarkMat, boardDarkMat, boardDarkMat, boardDarkMat, face, boardDarkMat]);
+  panel.position.y = 2.4 + 0.95;
+  const l1 = new THREE.Mesh(legGeo, boardDarkMat), l2 = new THREE.Mesh(legGeo, boardDarkMat);
+  l1.position.set(-1.1, 1.2, -0.03); l2.position.set(1.1, 1.2, -0.03);
+  g.add(panel, l1, l2); return g;
 }
 function buildBoards(tr) {
   if (D.boards) { KB.modelGroup.remove(D.boards.model); KB.realWorld.remove(D.boards.real); }
-  const { spots } = Sim.boardSpots(tr, D.prof);
+  const one = Sim.boardSpots(tr, D.prof).spots, spots = [];
+  for (const sp of one) { spots.push(sp); spots.push({ s: sp.s, side: -sp.side, n: sp.n }); } // both sides of the track
+  D.boardCorners = one.length ? new Set(one.map(sp => Math.round(sp.s + sp.n))).size : 0;
   const model = new THREE.Group(), real = new THREE.Group();
   for (const sp of spots) { model.add(boardMesh(sp.n)); real.add(boardMesh(sp.n)); }
   KB.onLayer(real, KB.REAL);
@@ -328,7 +336,7 @@ function layoutBoards(force) {
   if (!force && key === B.key) return;
   B.key = key;
   const put = (grp, kk, hww) => B.spots.forEach((sp, i) => {
-    const o = grp.children[i], pose = Sim.poseAt(tr, sp.s, sp.side * (hww + 1.5 + 0.9 * kk), bPos);
+    const o = grp.children[i], pose = Sim.poseAt(tr, sp.s, sp.side * (hww + 1.5 + 1.6 * kk), bPos);
     o.position.set(bPos.x, Sim.trackY(tr, sp.s), bPos.z);
     o.rotation.set(0, pose.yaw + Math.PI, 0); // face the cars coming towards them
     o.scale.setScalar(kk);
@@ -1209,6 +1217,7 @@ body.driving #bar, body.driving #dock, body.driving #board, body.driving #transp
     h += `<label class="chk"><input type="checkbox" id="dSound" ${cfg.sound ? 'checked' : ''}> Engine sound</label>`;
     h += `<h4>Circuit display</h4><label class="chk"><input type="checkbox" id="dTrack" ${cfg.drawTrack ? 'checked' : ''}> Draw the track</label>`;
     h += `<label class="chk"><input type="checkbox" id="dBoards" ${cfg.boards ? 'checked' : ''}> Braking boards (200, 100, 50 m)</label>`;
+    if (tr && D.boards) h += `<p class="sub">${D.boardCorners ? `Boards before ${D.boardCorners} braking corner${D.boardCorners > 1 ? 's' : ''} on this circuit.` : 'No corners here need heavy braking, so there are no boards.'}</p>`;
     if (!racing) h += `<h4>Your car</h4><div class="sw">${TEAM.map(([n, c]) => `<button data-col="${c}" title="${n}" style="background:${c}" class="${cfg.color === c ? 'on' : ''}"></button>`).join('')}</div>`;
     h += `<div class="row" style="margin-top:18px">`;
     if (D.paused) h += `<button class="go" id="dResume">Resume</button><button class="ghost" id="dRestart">Restart</button>`;
@@ -1217,7 +1226,7 @@ body.driving #bar, body.driving #dock, body.driving #board, body.driving #transp
     else h += `<button class="go" id="dStart">${D.state === 'results' ? 'Race again' : 'Start'}</button>`;
     h += `</div><div class="row" style="margin-top:8px">`;
     if (App.xrSupported && !renderer.xr.isPresenting) h += `<button class="ghost" id="dXR">${App.arOK ? 'Enter mixed reality' : 'Enter VR'}</button>`;
-    h += `<button class="ghost" id="dExit">Exit drive mode</button></div>`;
+    h += `<button class="ghost" id="dExit">Exit drive mode</button></div><p class="sub" style="margin-top:10px">Drive mode build ${DRIVE_BUILD}</p>`;
     m.innerHTML = h;
     this.wire();
   },
