@@ -19,6 +19,15 @@ export default {
     if (keys.length && !keys.includes(url.searchParams.get('key'))) {
       return new Response('Wrong or missing relay key', { status: 401, headers: CORS });
     }
+    if (url.pathname === '/hang') { // watch-together rooms with voice, one per 4-letter code
+      const code = String(url.searchParams.get('code') || '').toUpperCase();
+      if (!/^[A-Z]{4}$/.test(code)) return new Response('Room codes are 4 letters', { status: 400, headers: CORS });
+      if (request.headers.get('Upgrade') !== 'websocket') return new Response('Expected a WebSocket upgrade', { status: 426, headers: CORS });
+      return env.HANG.get(env.HANG.idFromName('hang:' + code)).fetch(request);
+    }
+    if (url.pathname === '/ice') {
+      return new Response(JSON.stringify(await iceServers(env)), { headers: { ...CORS, 'content-type': 'application/json', 'cache-control': 'no-store' } });
+    }
     if (url.pathname === '/room') { // online drive races, one room per 4-letter code
       const code = String(url.searchParams.get('code') || '').toUpperCase();
       if (!/^[A-Z]{4}$/.test(code)) return new Response('Room codes are 4 letters', { status: 400, headers: CORS });
@@ -41,6 +50,31 @@ export default {
     return new Response('Kerbside relay is running.', { headers: CORS });
   }
 };
+
+// Voice connection servers. With a Cloudflare TURN key set (TURN_KEY_ID and TURN_KEY_API_TOKEN secrets),
+// voice also works on networks that block direct connections. Credentials are short-lived and cached.
+let iceCache = null;
+async function iceServers(env) {
+  const stun = [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }];
+  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) return { iceServers: stun, turn: false };
+  if (iceCache && iceCache.until > Date.now()) return iceCache.value;
+  try {
+    const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`, {
+      method: 'POST', headers: { Authorization: 'Bearer ' + env.TURN_KEY_API_TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ttl: 86400 })
+    });
+    if (!r.ok) throw new Error('TURN ' + r.status);
+    const j = await r.json();
+    const list = (Array.isArray(j.iceServers) ? j.iceServers : [j.iceServers]).map(s => ({
+      ...s, urls: (Array.isArray(s.urls) ? s.urls : [s.urls]).filter(u => !/:53(\?|$)/.test(u)) // port 53 is blocked by browsers
+    })).filter(s => s.urls.length);
+    const value = { iceServers: list, turn: true };
+    iceCache = { value, until: Date.now() + 12 * 3600e3 };
+    return value;
+  } catch (e) {
+    return { iceServers: stun, turn: false, error: String(e.message || e) };
+  }
+}
 
 function merge(t, p) {
   if (p === null || typeof p !== 'object') return p;
@@ -383,6 +417,84 @@ export class RaceRoom extends DurableObject {
         break;
       case 'finish':
         this.broadcast({ t: 'finish', id, time: +m.time || 0 });
+        break;
+    }
+  }
+}
+
+// Watch-together rooms. Passes along each person's position (for avatars), sets up voice connections
+// between devices (the audio itself goes device to device, or through TURN), and keeps what the host is watching.
+const HANG_MAX = 10;
+export class HangRoom extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.peers = new Map();
+    this.nextId = 1;
+    this.host = null;
+    this.watch = null;
+  }
+  roster() {
+    return { t: 'roster', host: this.host, peers: [...this.peers.entries()].map(([id, p]) => ({ id, name: p.name, color: p.color, device: p.device, muted: p.muted })) };
+  }
+  send(ws, m) { try { ws.send(typeof m === 'string' ? m : JSON.stringify(m)); } catch (e) {} }
+  broadcast(m, except) {
+    const msg = JSON.stringify(m);
+    for (const [id, p] of this.peers) if (id !== except) this.send(p.ws, msg);
+  }
+  async fetch(request) {
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    server.accept();
+    if (this.peers.size >= HANG_MAX) {
+      this.send(server, { t: 'full' }); server.close(1008, 'Room is full');
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    const id = this.nextId++;
+    this.peers.set(id, { ws: server, name: 'Friend ' + id, color: '#9aa5ab', device: 'screen', muted: false });
+    if (this.host == null || !this.peers.has(this.host)) this.host = id;
+    const r = this.roster();
+    this.send(server, { t: 'welcome', you: id, host: this.host, peers: r.peers, watch: this.watch });
+    this.broadcast(r, id);
+    server.addEventListener('message', e => this.onMsg(id, e.data));
+    const leave = () => this.leave(id);
+    server.addEventListener('close', leave);
+    server.addEventListener('error', leave);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+  leave(id) {
+    if (!this.peers.delete(id)) return;
+    if (this.host === id) this.host = this.peers.size ? this.peers.keys().next().value : null;
+    if (!this.peers.size) { this.watch = null; return; }
+    this.broadcast({ t: 'left', id });
+    this.broadcast(this.roster());
+  }
+  onMsg(id, raw) {
+    if (typeof raw !== 'string' || raw.length > 64000) return;
+    let m; try { m = JSON.parse(raw); } catch (e) { return; }
+    const p = this.peers.get(id); if (!p) return;
+    switch (m.t) {
+      case 'hello':
+        p.name = String(m.name || p.name).slice(0, 16);
+        p.color = /^#[0-9a-f]{6}$/i.test(m.color || '') ? m.color : p.color;
+        p.device = m.device === 'xr' ? 'xr' : 'screen';
+        p.muted = !!m.muted;
+        this.broadcast(this.roster());
+        break;
+      case 'pose':
+        if (m.p && typeof m.p === 'object') this.broadcast({ t: 'pose', id, p: m.p }, id);
+        break;
+      case 'sig': {
+        const to = this.peers.get(+m.to);
+        if (to && m.data) this.send(to.ws, { t: 'sig', from: id, data: m.data });
+        break;
+      }
+      case 'watch':
+        if (id !== this.host || !m.w) return;
+        this.watch = m.w;
+        this.broadcast({ t: 'watch', w: m.w }, id);
+        break;
+      case 'ping':
+        this.send(p.ws, { t: 'pong', c: m.c, s: Date.now() });
         break;
     }
   }
