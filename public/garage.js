@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 2;
+const GARAGE_BUILD = 3;
 
 /* ---------------- Materials ---------------- */
 const toon = c => new THREE.MeshToonMaterial({ color: c });
@@ -17,6 +17,13 @@ const M = {
   glow: new THREE.MeshBasicMaterial({ color: 0xf4f6f8 }), screenOff: new THREE.MeshBasicMaterial({ color: 0x0e1215 })
 };
 let teamMat = toon(0xd2342b);
+const garageDark = toon(0x1c1f22);
+function outsideWindow(mat) { // don't draw this where the window is
+  mat.stencilWrite = true; mat.stencilWriteMask = 0x00; mat.stencilRef = 1; mat.stencilFuncMask = 0xff;
+  mat.stencilFunc = THREE.NotEqualStencilFunc;
+  mat.stencilFail = mat.stencilZFail = mat.stencilZPass = THREE.KeepStencilOp;
+  return mat;
+}
 function setTeamColor(hex) { teamMat.color.set(hex || '#D2342B'); }
 
 /* ---------------- Building it ---------------- */
@@ -25,9 +32,10 @@ function setTeamColor(hex) { teamMat.color.set(hex || '#D2342B'); }
 const W = 9, Dback = 5.5, Dfront = -6.5, Ht = 4.6;
 function box(g, w, h, d, x, y, z, mat, ry) { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); if (ry) m.rotation.y = ry; g.add(m); return m; }
 function cyl(g, r, h, x, y, z, mat, axis) { const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 20), mat); m.position.set(x, y, z); if (axis === 'x') m.rotation.z = Math.PI / 2; if (axis === 'z') m.rotation.x = Math.PI / 2; g.add(m); return m; }
+const bandMat = {};
 function tyre(g, x, y, z, band) {
   cyl(g, 0.33, 0.36, x, y, z, M.rubber);
-  const t = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.018, 6, 24), toon(band)); t.rotation.x = Math.PI / 2; t.position.set(x, y + 0.181, z); g.add(t);
+  const t = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.018, 6, 24), bandMat[band] || (bandMat[band] = toon(band))); t.rotation.x = Math.PI / 2; t.position.set(x, y + 0.181, z); g.add(t);
   cyl(g, 0.17, 0.37, x, y, z, M.steel);
 }
 function build() {
@@ -55,7 +63,7 @@ function build() {
   for (const x of [-2.7, 2.7]) box(G, 0.08, Ht - 3.75, 0.08, x, (Ht + 3.75) / 2, -3.2, M.steel);
   // the race car on jacks, nose out
   const car = new THREE.Group();
-  car.add(new THREE.Mesh(KB.CarGeo.body, teamMat), new THREE.Mesh(KB.CarGeo.dark, KB.darkMat));
+  car.add(new THREE.Mesh(KB.CarGeo.body, teamMat), new THREE.Mesh(KB.CarGeo.dark, garageDark));
   car.position.set(2.6, 0.22, -1.6); car.rotation.y = Math.PI; G.add(car);
   box(G, 0.5, 0.2, 0.3, 2.6, 0.1, -1.6 + 2.6, M.steel); box(G, 0.5, 0.2, 0.3, 2.6, 0.1, -1.6 - 2.3, M.steel);
   // tool chests along the left wall
@@ -98,7 +106,35 @@ function build() {
   // timing monitor
   const mon = monitor(); mon.mesh.position.set(-1.5, 3.05, -3.14); G.add(mon.mesh);
   box(G, 2.06, 1.32, 0.08, -1.5, 3.05, -3.2, M.dark);
+  bake(G, new Set([sky, plinth, mon.mesh, car]));
+  G.traverse(o => { if (o.material) [].concat(o.material).forEach(outsideWindow); });
   return { G, plinth, top, edge, mon };
+}
+
+// Merge the garage's ~130 fixed pieces into one mesh per material: a handful of draw calls per eye
+// instead of hundreds, which keeps the headset at full frame rate.
+function bake(G, keep) {
+  try {
+    const byMat = new Map(), drop = [];
+    for (const m of G.children) {
+      if (keep.has(m) || !m.isMesh || !m.geometry || Array.isArray(m.material)) continue;
+      m.updateMatrix();
+      const g = (m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone()); g.applyMatrix4(m.matrix);
+      if (!byMat.has(m.material)) byMat.set(m.material, []);
+      byMat.get(m.material).push(g); drop.push(m);
+    }
+    for (const [mat, list] of byMat) {
+      let n = 0; for (const g of list) n += g.attributes.position.count;
+      if (!n) return; // nothing measurable to merge (test stand-in); keep the pieces as they are
+      const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3); let o = 0;
+      for (const g of list) { pos.set(g.attributes.position.array, o * 3); nor.set(g.attributes.normal.array, o * 3); o += g.attributes.position.count; }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+      geo.computeBoundingSphere();
+      G.add(new THREE.Mesh(geo, mat));
+    }
+    for (const m of drop) G.remove(m);
+  } catch (e) { /* if merging fails, the separate pieces still draw */ }
 }
 
 /* ---------------- Timing monitor ---------------- */
@@ -133,29 +169,48 @@ function drawMonitor(mon) {
 }
 
 /* ---------------- Window to your real room ---------------- */
-// A cut-out that writes "see-through" into the picture, so the headset's passthrough shows there.
+// The window marks its area in the stencil buffer, and the garage simply isn't drawn there, so your real
+// room (passthrough) shows through. It writes no depth, so it can't fight with anything, and it never
+// cuts into the table, cars, friends or panels: those are drawn on top as normal.
 const SIZES = { S: 1.3, M: 1.9, L: 2.7 };
-const holeMat = new THREE.MeshBasicMaterial({ color: 0x000000, opacity: 0, transparent: false, blending: THREE.NoBlending, depthWrite: true });
+const holeMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, depthTest: false,
+  stencilWrite: true, stencilRef: 1, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp, stencilFail: THREE.ReplaceStencilOp, stencilZFail: THREE.ReplaceStencilOp });
 const hole = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), holeMat);
 hole.renderOrder = -10; hole.visible = false; scene.add(hole);
 const rim = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-0.5, -0.5, 0), new THREE.Vector3(0.5, -0.5, 0), new THREE.Vector3(0.5, 0.5, 0), new THREE.Vector3(-0.5, 0.5, 0)]),
   new THREE.LineBasicMaterial({ color: 0xe9e6df }));
 rim.visible = false; scene.add(rim);
-const win = { placed: false, pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
+const win = { placed: false, pos: new THREE.Vector3(), quat: new THREE.Quaternion(), dist: 2.5 };
 const rayM = new THREE.Matrix4(), rO = new THREE.Vector3(), rD = new THREE.Vector3(), headV = new THREE.Vector3();
-function aimPose(out) { // 3 m along the right controller's ray (or straight ahead), facing you
+function upright(out) { // stand the window up and turn it to face you, like a real window or TV
+  headV.copy(KB.xrHead());
+  const yaw = Math.atan2(headV.x - out.pos.x, headV.z - out.pos.z);
+  out.quat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+}
+function aimPose(out) { // along the right controller's ray, at the chosen distance; never below the floor
   const ctl = KB.controllers[1] || KB.controllers[0];
   rayM.identity().extractRotation(ctl.matrixWorld);
   rO.setFromMatrixPosition(ctl.matrixWorld); rD.set(0, 0, -1).applyMatrix4(rayM);
   if (rO.lengthSq() === 0) { rO.copy(KB.xrHead()); rD.copy(KB.xrForward()); }
-  out.pos.copy(rO).addScaledVector(rD, 3);
-  headV.copy(KB.xrHead());
-  const m = new THREE.Object3D(); m.position.copy(out.pos); m.lookAt(headV); out.quat.copy(m.quaternion);
+  out.pos.copy(rO).addScaledVector(rD, out.dist);
+  out.pos.y = Math.max(sizeOf()[1] / 2 + 0.3, out.pos.y);
+  upright(out);
 }
 function sizeOf() { const w = SIZES[App.ptSize] || SIZES.M; return [w, w * 0.62]; }
-function placeWindowDefault() { aimPose(win); win.placed = true; }
+function placeWindowDefault() { // straight ahead at eye height, not wherever the controller happens to point
+  const h = KB.xrHead(), f = KB.xrForward();
+  win.pos.copy(h).addScaledVector(f, win.dist); win.pos.y = Math.max(sizeOf()[1] / 2 + 0.3, h.y - 0.1);
+  upright(win); win.placed = true;
+}
 function startWindowPlacing() { if (!canWindow()) return false; App.placingWindow = true; return true; }
 function confirmWindow() { aimPose(win); win.placed = true; App.placingWindow = false; KB.toast('Window placed. Choose “Place window” again to move it.', 4000); }
+function aimStick(dt) { // while aiming: right stick up/down moves the window farther or closer
+  const session = renderer.xr.getSession(); if (!session) return;
+  for (const src of session.inputSources) {
+    if (src.handedness !== 'right' || !src.gamepad || src.gamepad.axes.length < 4) continue;
+    const ay = src.gamepad.axes[3]; if (Math.abs(ay) > 0.15) win.dist = Math.max(1, Math.min(6, win.dist - ay * dt * 2));
+  }
+}
 const canWindow = () => renderer.xr.isPresenting && App.xrMode === 'immersive-ar';
 
 /* ---------------- Per frame ---------------- */
@@ -194,7 +249,7 @@ function frame(dt) {
   // passthrough window
   const [w, h] = sizeOf();
   if (App.placingWindow && canWindow()) {
-    aimPose(win); rim.visible = true; hole.visible = false;
+    aimStick(dt); aimPose(win); rim.visible = true; hole.visible = false;
     rim.position.copy(win.pos); rim.quaternion.copy(win.quat); rim.scale.set(w, h, 1);
   } else {
     rim.visible = false;
