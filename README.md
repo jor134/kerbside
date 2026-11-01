@@ -52,7 +52,14 @@ public/icon-512.png
 Under View → Surroundings, choose **Pit garage** for a fully virtual team garage built around the circuit table, with the pit lane, pit wall and a grandstand out of the open front and a timing monitor on the gantry. On an iPad or phone it's the background behind the table.
 
 - In the headset, place the table first (you see your real room while placing), then the garage forms around it. Turning the table doesn't turn the garage; **Turn garage** on the headset panel does.
-- Your F1 TV browser window can float anywhere over it, as usual in the Quest browser.
+- Your F1 TV browser window can float anywhere over it, as usual in the Quest browser:
+  1. Enter mixed reality or VR in Kerbside and place the table.
+  2. Press **Open F1 TV** on the headset panel (or use the link under Surroundings → "Watch your F1 TV stream in the headset"). It opens in its own window.
+  3. Sign in, choose **Watch live**, and make the player full screen.
+  4. Move the F1 TV window to the left window slot, then minimize the Kerbside window.
+  5. Set **Broadcast delay** on the Live tab until the cars match the stream.
+
+  If F1 TV won't open from inside the headset view, do steps 2 to 4 in the normal browser first, then enter the headset view.
 - **TV window** cuts a window through the garage to your real room, so you can watch your real TV. **Place window**: point at the TV and pull the trigger. **Size** cycles small, medium and large. Needs mixed reality (passthrough).
 - In a hangout, the host's choice of surroundings applies to everyone. The TV window stays personal.
 
