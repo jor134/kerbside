@@ -5,7 +5,7 @@
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const renderer = KB.renderer;
-const HANG_BUILD = 1;
+const HANG_BUILD = 2;
 const COLORS = ['#D2342B', '#F28A1E', '#E8C33A', '#2F8F4E', '#2BB5A0', '#2E6FD9', '#8E5BD6', '#E66BB0', '#C9CED3', '#F2F2EF'];
 
 const me = Object.assign({ name: '', color: COLORS[Math.floor(Math.random() * COLORS.length)], follow: true }, store.get('hang:me', {}));
@@ -69,19 +69,21 @@ function leave(quiet) {
   if (!quiet) UI.render();
 }
 function send(m) { if (H.ws && H.ws.readyState === 1) H.ws.send(JSON.stringify(m)); }
-function sendHello() { send({ t: 'hello', name: myName(), color: me.color, device: device(), muted: H.muted || !H.mic }); }
+function sendHello() { if (window.KBGarage) KBGarage.setTeamColor(me.color); send({ t: 'hello', name: myName(), color: me.color, device: device(), muted: H.muted || !H.mic }); }
 
 function onMsg(m) {
   if (m.t === 'welcome') {
     H.id = m.you; H.host = m.host; H.peers = m.peers || [];
     if (m.watch) applyWatch(m.watch);
+    if (m.env && !isHost()) KB.setEnv(m.env, { fromHost: true });
     syncPeers(); UI.render();
-    if (isHost()) publishWatch(true);
+    if (isHost()) { publishWatch(true); publishEnv(App.env); }
   } else if (m.t === 'roster') {
     const wasHost = isHost();
     H.host = m.host; H.peers = m.peers || [];
     syncPeers(); UI.render();
-    if (!wasHost && isHost()) { toast('You’re the host now. Friends follow what you watch.', 6000); publishWatch(true); }
+    if (!wasHost && isHost()) toast('You’re the host now. Friends follow what you watch.', 6000);
+    if (isHost()) { publishWatch(true); publishEnv(App.env); } // someone joined or left: make sure everyone has the host's choices
   } else if (m.t === 'left') {
     dropPeer(m.id);
   } else if (m.t === 'pose') {
@@ -91,6 +93,8 @@ function onMsg(m) {
     onSignal(m.from, m.data);
   } else if (m.t === 'watch') {
     applyWatch(m.w);
+  } else if (m.t === 'env') {
+    if (!isHost() && m.env) { KB.setEnv(m.env, { fromHost: true }); toast(m.env === 'garage' ? 'The host moved everyone into the pit garage.' : 'The host switched everyone to their own rooms.', 4000); }
   } else if (m.t === 'full') {
     toast('That room is full (10 people).', 6000); leave();
   }
@@ -249,6 +253,8 @@ async function applyWatch(w) {
     const ts = $('#tSpeed'); if (ts) ts.value = R.speed;
   }
 }
+
+function publishEnv(env) { if (isHost()) send({ t: 'env', env }); }
 
 /* ---------------- Avatars ---------------- */
 // Positions are shared relative to each person's table (metres from its centre, turned with it),
@@ -455,6 +461,7 @@ const UI = {
 #hang .sw2 button.on { border-color: var(--chalk); }
 #hang .chk { display: flex; gap: 6px; align-items: center; font-size: 14px; margin-top: 6px; }
 #hang .warn { color: var(--flag); font-size: 13px; margin: 6px 0; }
+@media (min-width: 761px) { body.dock-open #hang { left: calc(314px + env(safe-area-inset-left, 0px)); } } /* beside the menu, not over it */
 @media (max-width: 760px) { #hang { bottom: calc(130px + env(safe-area-inset-bottom, 0px)); } }
 `;
     document.head.appendChild(css);
@@ -559,8 +566,9 @@ function frame(dt, xrFrame) {
 /* ---------------- Public ---------------- */
 const Hang = {
   open(prefill) { UI.build(); if (prefill) H.pending = String(prefill).toUpperCase(); UI.show(true); },
-  join, leave, frame, onSelect,
+  join, leave, frame, onSelect, publishEnv,
   active() { return H.joined; },
+  isHost,
   _H: H
 };
 window.KBHang = Hang;

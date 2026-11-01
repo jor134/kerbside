@@ -204,6 +204,10 @@ body:not(.board-open) #board{display:none}
     </select></label>
     <label id="mtKeyWrap" hidden>MapTiler key<input id="mtKey" type="password" autocomplete="off" placeholder="From cloud.maptiler.com"></label>
     <p class="hint" id="satHint"></p>
+    <h3 style="margin-top:14px">Surroundings</h3>
+    <div class="seg" id="envSeg"><button data-env="passthrough">My room</button><button data-env="garage">Pit garage</button></div>
+    <label class="check" style="margin-top:10px"><input type="checkbox" id="ptWinChk"> Window to my real room (headset)</label>
+    <p class="hint" id="envHint">In the pit garage, place your F1 TV browser window wherever you like, or cut a window through to your real TV.</p>
   </section>
 
   <section id="delayPane" hidden>
@@ -806,6 +810,39 @@ function setDrawTrack(on) {
   App.uiDirty = true; if (renderer.xr.isPresenting) drawXRPanel();
 }
 function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
+App.env = store.get('env', 'passthrough'); App.ptWindow = store.get('ptWindow', false); App.ptSize = store.get('ptSize', 'M');
+let garageLoading = null;
+const GARAGE_VER = '1';
+function loadGarage() {
+  if (window.KBGarage) return Promise.resolve();
+  return garageLoading || (garageLoading = new Promise((res, rej) => {
+    const sc = document.createElement('script'); sc.src = 'garage.js?v=' + GARAGE_VER;
+    sc.onload = () => window.KBGarage ? res() : rej(new Error('the garage did not start'));
+    sc.onerror = () => { garageLoading = null; rej(new Error('could not load the garage')); };
+    document.head.appendChild(sc);
+  }));
+}
+function setEnv(env, opts) {
+  opts = opts || {};
+  if (!opts.fromHost && window.KBHang && KBHang.active() && !KBHang.isHost()) { toast('In a hangout, the host chooses the surroundings.'); refreshEnvUI(); return; }
+  App.env = env === 'garage' ? 'garage' : 'passthrough';
+  if (!opts.fromHost) store.set('env', App.env);
+  if (App.env === 'garage') loadGarage().catch(e => toast('Pit garage: ' + e.message + '.', 6000));
+  if (!opts.fromHost && window.KBHang && KBHang.active()) KBHang.publishEnv(App.env);
+  refreshEnvUI(); App.uiDirty = true; if (renderer.xr.isPresenting) drawXRPanel();
+}
+function setPtWindow(on) {
+  App.ptWindow = on; store.set('ptWindow', on);
+  if (on && renderer.xr.isPresenting && window.KBGarage && !KBGarage.canWindow()) toast('This headset view has no passthrough, so the window would be black.', 5000);
+  refreshEnvUI(); if (renderer.xr.isPresenting) drawXRPanel();
+}
+function refreshEnvUI() {
+  document.querySelectorAll('#envSeg button').forEach(b => b.classList.toggle('on', b.dataset.env === App.env));
+  const c = document.getElementById('ptWinChk'); if (c) { c.checked = App.ptWindow; c.disabled = App.env !== 'garage'; }
+  const guest = window.KBHang && KBHang.active() && !KBHang.isHost();
+  const h = document.getElementById('envHint');
+  if (h) h.textContent = guest ? 'The host chooses the surroundings in a hangout.' : 'In the pit garage, place your F1 TV browser window wherever you like, or cut a window through to your real TV.';
+}
 function setScenery(on) {
   App.scenery = on; store.set('scenery', on); applyScenery();
   const cb = document.getElementById('sceneryChk'); if (cb) cb.checked = on;
@@ -1740,7 +1777,7 @@ function resize() {
 addEventListener('resize', resize); resize();
 
 /* ================= Headset panels ================= */
-const UIW = 1024, UIH = 820;
+const UIW = 1024, UIH = 900;
 const uiCanvas = document.createElement('canvas'); uiCanvas.width = UIW; uiCanvas.height = UIH;
 const uctx = uiCanvas.getContext('2d');
 const uiTex = new THREE.CanvasTexture(uiCanvas);
@@ -1847,7 +1884,18 @@ function drawXRPanel() {
     c.fillStyle = '#E9E6DF'; c.fillText(label, cxm + 6, y3 + 44);
   } else { c.fillStyle = '#94A1A8'; c.fillText('No car selected', (362 + UIW - 242) / 2, y3 + 44); }
   c.textAlign = 'left';
-  if (SAT.attrib) { c.font = '400 18px Barlow, sans-serif'; c.fillStyle = '#94A1A8'; c.fillText(SAT.attrib, 32, 806); }
+  const y4 = 796; let x4 = 32;
+  btn(x4, y4, 150, 'My room', App.env === 'passthrough', () => setEnv('passthrough')); x4 += 160;
+  btn(x4, y4, 160, 'Pit garage', App.env === 'garage', () => setEnv('garage')); x4 += 170;
+  if (App.env === 'garage') {
+    btn(x4, y4, 190, App.ptWindow ? 'TV window: on' : 'TV window: off', App.ptWindow, () => setPtWindow(!App.ptWindow)); x4 += 200;
+    if (App.ptWindow) {
+      btn(x4, y4, 190, 'Place window', App.placingWindow, () => { if (window.KBGarage && !KBGarage.startWindowPlacing()) toast('The window needs mixed reality (passthrough).', 5000); else toast('Point at your TV and pull the trigger.', 5000); }); x4 += 200;
+      const sz = ['S', 'M', 'L'];
+      btn(x4, y4, 110, 'Size ' + App.ptSize, false, () => { App.ptSize = sz[(sz.indexOf(App.ptSize) + 1) % 3]; store.set('ptSize', App.ptSize); });
+    } else btn(x4, y4, 190, 'Turn garage', false, () => { App.garageTurn = ((App.garageTurn || 0) + Math.PI / 2) % (2 * Math.PI); });
+  }
+  if (SAT.attrib) { c.font = '400 18px Barlow, sans-serif'; c.fillStyle = '#94A1A8'; c.fillText(SAT.attrib, 32, UIH - 12); }
   App.uiHits = hits; uiTex.needsUpdate = true;
 }
 
@@ -1874,6 +1922,7 @@ function onSelect(e) {
   }
   if (hit && (hit.object === chaseMesh || hit.object === chaseLabel) && hit.uv) { cycleChase(hit.uv.x < 0.5 ? -1 : 1); return; }
   if (hit) return;
+  if (App.placingWindow && window.KBGarage) { KBGarage.confirmWindow(); App.uiDirty = true; drawXRPanel(); return; }
   if (App.placing && App.view !== 'trackside') placeAtReticle();
 }
 function placeAtReticle() {
@@ -1923,6 +1972,7 @@ async function enterXR() {
     renderer.setClearAlpha(0);
     session.requestReferenceSpace('viewer').then(vs => session.requestHitTestSource({ space: vs })).then(h => { hitSource = h; }).catch(() => { hitSource = null; });
     session.addEventListener('end', () => {
+      if (window.KBGarage) KBGarage.sessionEnded();
       hitSource = null; uiMesh.visible = chaseMesh.visible = reticle.visible = false; App.placed = false; App.tsBase.set(0, 0, 0);
       layoutModel(); resize(); $('#xrBtn').textContent = App.arOK ? 'Enter mixed reality' : 'Enter VR';
     });
@@ -1967,6 +2017,7 @@ function xrTick(frame, dt) {
       const gp = src.gamepad; if (!gp || gp.axes.length < 4) continue;
       const ax = Math.abs(gp.axes[2]) > 0.15 ? gp.axes[2] : 0, ay = Math.abs(gp.axes[3]) > 0.15 ? gp.axes[3] : 0;
       if (!ax && !ay) continue;
+      if (App.placingWindow) continue;
       if (src.handedness === 'right') { App.tableYaw -= ax * dt * 1.6; App.tableScale = Math.max(0.4, Math.min(4, App.tableScale * (1 - ay * dt * 0.9))); }
       else if (!panelView()) { App.tableYaw -= ax * dt * 1.6; }
       else continue;
@@ -2033,6 +2084,7 @@ renderer.setAnimationLoop((time, frame) => { try { frameBody(time, frame); } cat
 function frameBody(time, frame) {
   const now = performance.now(), dt = Math.min(0.1, App.lastT ? (now - App.lastT) / 1000 : 0.016); App.lastT = now; frameNo++;
   if (window.KBHang) KBHang.frame(dt, frame); // voice and avatars keep running in every mode
+  if (window.KBGarage) KBGarage.frame(dt);
   if (window.KBDrive && KBDrive.active) { KBDrive.frame(dt, frame); return; }
   if (App.source === 'replay') Replay.tick(dt);
   if (App.source === 'live') Live.tick();
@@ -2170,7 +2222,7 @@ window.KB = {
   CarGeo, darkMat, CAR_LEN, labelSprite, modelCarLen, Cars, Replay, Live, orbit, flatCamTick,
   Track, setTrack, cacheTrack, cachedTrack, sharedTrack, packTrack, outlineFromSession, relayInfo,
   layoutModel, rebuildModelTrack, positionPanels, xrHead, xrForward, enterXR, placementTick, placeAtReticle,
-  uiMesh, chaseMesh, controllers, applyTrackVis, showSource, getSessions: () => sessions
+  uiMesh, chaseMesh, controllers, applyTrackVis, showSource, setEnv, getSessions: () => sessions
 };
 const DRIVE_VER = '3'; // bump whenever drive.js changes, so devices don't keep an old copy
 let driveLoading = null;
@@ -2183,7 +2235,11 @@ function loadDrive() {
     document.head.appendChild(sc);
   }));
 }
-const HANG_VER = '1';
+document.querySelectorAll('#envSeg button').forEach(b => b.onclick = () => setEnv(b.dataset.env));
+$('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
+refreshEnvUI();
+if (App.env === 'garage') loadGarage().catch(() => {});
+const HANG_VER = '2';
 let hangLoading = null;
 function loadHang() {
   if (window.KBHang) return Promise.resolve();
