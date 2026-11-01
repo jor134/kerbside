@@ -177,6 +177,11 @@ body:not(.board-open) #board{display:none}
   </section>
 
   <section>
+    <button id="hangBtn" class="ghost">Watch with friends</button>
+    <p class="hint">A shared room with voice chat. Everyone sees the same race, and friends appear around your table.</p>
+  </section>
+
+  <section>
     <h3>View</h3>
     <div class="seg" id="viewSeg">
       <button data-view="tabletop" class="on">Tabletop</button>
@@ -1076,7 +1081,7 @@ const Replay = {
     const gen = ++this.gen;
     Live.stop(); resetCars();
     App.source = 'replay'; App.track = null;
-    Object.assign(this, { sk: sess.session_key, loaded: new Set(), loading: new Set(), pos: new Map(), ints: new Map(), laps: new Map(), stints: new Map(), pits: [], rc: [], playing: false });
+    Object.assign(this, { sess, sk: sess.session_key, loaded: new Set(), loading: new Set(), pos: new Map(), ints: new Map(), laps: new Map(), stints: new Map(), pits: [], rc: [], playing: false });
     this.isRace = /race|sprint/i.test(sess.session_type || '') && !/qualif|shootout/i.test(sess.session_name || '');
     this.name = `${sess.circuit_short_name || sess.location}, ${sess.session_name}`;
     App.modeLabel = 'Replay: ' + this.name;
@@ -1857,6 +1862,7 @@ const controllers = [0, 1].map(i => {
 const raycaster = new THREE.Raycaster(), tmpM = new THREE.Matrix4();
 function rayFrom(c) { tmpM.identity().extractRotation(c.matrixWorld); raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld); raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tmpM); }
 function onSelect(e) {
+  if (window.KBHang && KBHang.onSelect(e)) return;
   if (window.KBDrive && KBDrive.active) { KBDrive.onSelect(e); return; }
   const c = e.target; rayFrom(c);
   const hit = raycaster.intersectObjects([uiMesh, chaseMesh, chaseLabel].filter(m => m.visible && (m !== chaseLabel || chaseMesh.visible)), false)[0];
@@ -2026,6 +2032,7 @@ let frameErrShown = false;
 renderer.setAnimationLoop((time, frame) => { try { frameBody(time, frame); } catch (err) { if (!frameErrShown) { frameErrShown = true; window.__kbErr(err.message + ' (in the render loop)'); console.error(err); } } });
 function frameBody(time, frame) {
   const now = performance.now(), dt = Math.min(0.1, App.lastT ? (now - App.lastT) / 1000 : 0.016); App.lastT = now; frameNo++;
+  if (window.KBHang) KBHang.frame(dt, frame); // voice and avatars keep running in every mode
   if (window.KBDrive && KBDrive.active) { KBDrive.frame(dt, frame); return; }
   if (App.source === 'replay') Replay.tick(dt);
   if (App.source === 'live') Live.tick();
@@ -2098,6 +2105,11 @@ $('#shareBtn').onclick = async () => {
   $('#relayKey').value = key; store.set('relayKey', key);
   const relay = h.get('relay'); if (relay) { $('#relayUrl').value = relay; store.set('relayUrl', relay); }
   history.replaceState(null, '', location.pathname + location.search);
+  const hang = (h.get('hang') || '').toUpperCase();
+  if (/^[A-Z]{4}$/.test(hang)) { // a hangout invite: open the room card; joining needs a tap for the microphone
+    addEventListener('load', () => loadHang().then(() => { KBHang.open(hang); toast('Tap Join to enter room ' + hang + '.', 6000); }).catch(() => {}));
+    return;
+  }
   showSource('live');
   Live.connect();
 })();
@@ -2158,7 +2170,7 @@ window.KB = {
   CarGeo, darkMat, CAR_LEN, labelSprite, modelCarLen, Cars, Replay, Live, orbit, flatCamTick,
   Track, setTrack, cacheTrack, cachedTrack, sharedTrack, packTrack, outlineFromSession, relayInfo,
   layoutModel, rebuildModelTrack, positionPanels, xrHead, xrForward, enterXR, placementTick, placeAtReticle,
-  uiMesh, chaseMesh, controllers, applyTrackVis, getSessions: () => sessions
+  uiMesh, chaseMesh, controllers, applyTrackVis, showSource, getSessions: () => sessions
 };
 const DRIVE_VER = '3'; // bump whenever drive.js changes, so devices don't keep an old copy
 let driveLoading = null;
@@ -2171,6 +2183,20 @@ function loadDrive() {
     document.head.appendChild(sc);
   }));
 }
+const HANG_VER = '1';
+let hangLoading = null;
+function loadHang() {
+  if (window.KBHang) return Promise.resolve();
+  return hangLoading || (hangLoading = new Promise((res, rej) => {
+    const sc = document.createElement('script'); sc.src = 'hang.js?v=' + HANG_VER;
+    sc.onload = () => window.KBHang ? res() : rej(new Error('the hangout did not start'));
+    sc.onerror = () => { hangLoading = null; rej(new Error('could not load the hangout')); };
+    document.head.appendChild(sc);
+  }));
+}
+$('#hangBtn').onclick = async () => {
+  try { await loadHang(); KBHang.open(); } catch (e) { toast('Hangout: ' + e.message + '.', 7000); }
+};
 $('#driveBtn').onclick = async () => {
   const b = $('#driveBtn'); b.disabled = true; b.textContent = 'Loading…';
   try { await loadDrive(); KBDrive.open(); } catch (e) { toast('Drive mode: ' + e.message + '.', 7000); }
