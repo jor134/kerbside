@@ -74,6 +74,7 @@ label.check input{width:auto;margin:0}
 .howto{margin-top:12px;border:1px solid var(--tarmac-3);border-radius:7px;padding:8px 10px;font-size:13px}
 .howto summary{cursor:pointer;font:600 16px/1.3 var(--cond);color:var(--chalk)}
 .howto p{color:var(--muted);margin:8px 0}
+.howto a{color:var(--chalk);font-weight:600}
 .howto ol{margin:6px 0 0;padding-left:20px}
 .howto li{margin:0 0 7px}
 .howto b{color:var(--chalk);font-weight:600}
@@ -208,6 +209,21 @@ body:not(.board-open) #board{display:none}
     <div class="seg" id="envSeg"><button data-env="passthrough">My room</button><button data-env="garage">Pit garage</button></div>
     <label class="check" style="margin-top:10px"><input type="checkbox" id="ptWinChk"> Window to my real room (headset)</label>
     <p class="hint" id="envHint">In the pit garage, place your F1 TV browser window wherever you like, or cut a window through to your real TV.</p>
+    <details class="howto" id="streamHowto">
+      <summary>Watch your F1 TV stream in the headset</summary>
+      <ol>
+        <li>Enter mixed reality or VR here and place the table.</li>
+        <li>Press <b>Open F1 TV</b> on the headset panel (or the link below). It opens in its own browser window, so Kerbside keeps running.</li>
+        <li>Sign in with your F1 TV account.</li>
+        <li>Choose <b>Watch live</b> on the session.</li>
+        <li>Make the player full screen.</li>
+        <li>Move the F1 TV window to the <b>left window slot</b>: grab the bar under the window and drag it left.</li>
+        <li>Minimize the Kerbside browser window. The table, garage and friends stay around you.</li>
+        <li>Back in Kerbside, raise <b>Broadcast delay</b> (Live tab) until the cars match the stream.</li>
+      </ol>
+      <p><a id="f1tvLink" href="https://f1tv.formula1.com" target="_blank" rel="noopener">Open F1 TV in a new window</a></p>
+      <p>If F1 TV won't open from inside the headset view, do steps 2 to 6 first in the normal browser, then come back to Kerbside and enter the headset view. Your browser windows, not Kerbside, decide where the stream can sit. These steps are based on the Quest browser as it works now and may change.</p>
+    </details>
   </section>
 
   <section id="delayPane" hidden>
@@ -1777,7 +1793,7 @@ function resize() {
 addEventListener('resize', resize); resize();
 
 /* ================= Headset panels ================= */
-const UIW = 1024, UIH = 900;
+const UIW = 1024, UIH = 980;
 const uiCanvas = document.createElement('canvas'); uiCanvas.width = UIW; uiCanvas.height = UIH;
 const uctx = uiCanvas.getContext('2d');
 const uiTex = new THREE.CanvasTexture(uiCanvas);
@@ -1806,6 +1822,11 @@ function drawChaseLabel() {
 const reticle = new THREE.Mesh(new THREE.RingGeometry(0.06, 0.08, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xd2342b }));
 reticle.matrixAutoUpdate = false; reticle.visible = false; scene.add(reticle);
 
+function openF1TV() { // a separate window, so Kerbside keeps running
+  try { window.open('https://f1tv.formula1.com', '_blank', 'noopener'); }
+  catch (e) { toast('F1 TV didn’t open from here. Exit the headset view, use the link under Surroundings, then come back.', 7000); return; }
+  toast('F1 TV is opening in a new window. If nothing appears, exit the headset view and use the link under Surroundings.', 7000);
+}
 function rr(c, x, y, w, h, r) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
 function drawXRPanel() {
   const c = uctx, hits = [];
@@ -1895,6 +1916,11 @@ function drawXRPanel() {
       btn(x4, y4, 110, 'Size ' + App.ptSize, false, () => { App.ptSize = sz[(sz.indexOf(App.ptSize) + 1) % 3]; store.set('ptSize', App.ptSize); });
     } else btn(x4, y4, 190, 'Turn garage', false, () => { App.garageTurn = ((App.garageTurn || 0) + Math.PI / 2) % (2 * Math.PI); });
   }
+  const y5 = 876;
+  btn(32, y5, 190, 'Open F1 TV', false, openF1TV);
+  c.font = '500 19px Barlow, sans-serif'; c.fillStyle = '#94A1A8';
+  c.fillText('Sign in, choose Watch live, make the player full screen,', 240, y5 + 26);
+  c.fillText('move it to the left window slot, then minimize Kerbside.', 240, y5 + 50);
   if (SAT.attrib) { c.font = '400 18px Barlow, sans-serif'; c.fillStyle = '#94A1A8'; c.fillText(SAT.attrib, 32, UIH - 12); }
   App.uiHits = hits; uiTex.needsUpdate = true;
 }
