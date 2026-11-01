@@ -792,7 +792,7 @@ function buildScenery(tr) {
 
 App.scenery = store.get('scenery', true);
 App.drawTrack = store.get('drawTrack', false);
-function trackShown() { return App.drawTrack || SAT.failed; }
+function trackShown() { return (App.trackOverride != null ? App.trackOverride : App.drawTrack) || SAT.failed; } // drive mode sets its own
 function applyTrackVis() { const v = trackShown(); if (modelTrack) modelTrack.visible = v; if (realTrack) realTrack.visible = v; }
 function setDrawTrack(on) {
   App.drawTrack = on; store.set('drawTrack', on);
@@ -2158,9 +2158,9 @@ window.KB = {
   CarGeo, darkMat, CAR_LEN, labelSprite, modelCarLen, Cars, Replay, Live, orbit, flatCamTick,
   Track, setTrack, cacheTrack, cachedTrack, sharedTrack, packTrack, outlineFromSession, relayInfo,
   layoutModel, rebuildModelTrack, positionPanels, xrHead, xrForward, enterXR, placementTick, placeAtReticle,
-  uiMesh, chaseMesh, controllers, getSessions: () => sessions
+  uiMesh, chaseMesh, controllers, applyTrackVis, getSessions: () => sessions
 };
-const DRIVE_VER = '1';
+const DRIVE_VER = '2'; // bump whenever drive.js changes, so devices don't keep an old copy
 let driveLoading = null;
 function loadDrive() {
   if (window.KBDrive) return Promise.resolve();
