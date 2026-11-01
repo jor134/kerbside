@@ -5,12 +5,13 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 1;
+const GARAGE_BUILD = 2;
 
 /* ---------------- Materials ---------------- */
 const toon = c => new THREE.MeshToonMaterial({ color: c });
+const paint = c => new THREE.MeshToonMaterial({ color: c, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
 const M = {
-  floor: toon(0xb7bcc0), line: toon(0xe8c33a), white: toon(0xeeeeea), wall: toon(0x353d43), back: toon(0x2a3136),
+  floor: toon(0xb7bcc0), line: paint(0xe8c33a), white: toon(0xeeeeea), paintWhite: paint(0xeeeeea), wall: toon(0x353d43), back: toon(0x2a3136),
   ceil: toon(0x22282c), steel: toon(0x6f7a82), dark: toon(0x1c1f22), rubber: toon(0x17191b), asphalt: toon(0x3b4349),
   grass: toon(0x5b8a4e), concrete: toon(0x9aa1a6), stand: toon(0x7d8c99), roof: toon(0xeef0f1),
   glow: new THREE.MeshBasicMaterial({ color: 0xf4f6f8 }), screenOff: new THREE.MeshBasicMaterial({ color: 0x0e1215 })
@@ -32,9 +33,9 @@ function tyre(g, x, y, z, band) {
 function build() {
   const G = new THREE.Group(); G.name = 'garage';
   // floor with painted bay markings
-  box(G, W, 0.04, Dback - Dfront, 0, -0.02, (Dback + Dfront) / 2, M.floor);
-  for (const x of [-3.6, 3.6]) box(G, 0.08, 0.005, Dback - Dfront - 0.6, x, 0.003, (Dback + Dfront) / 2, M.line);
-  box(G, W - 0.6, 0.005, 0.1, 0, 0.003, Dfront + 0.4, M.white);
+  box(G, W, 0.2, Dback - Dfront, 0, -0.1, (Dback + Dfront) / 2, M.floor);
+  for (const x of [-3.6, 3.6]) box(G, 0.08, 0.01, Dback - Dfront - 0.6, x, 0.005, (Dback + Dfront) / 2, M.line);
+  box(G, W - 0.6, 0.01, 0.1, 0, 0.005, Dfront + 0.4, M.paintWhite);
   // walls and ceiling (boxes, so they look solid from either side)
   box(G, W, Ht, 0.2, 0, Ht / 2, Dback, M.back);
   box(G, W, 0.3, 0.22, 0, 2.45, Dback - 0.02, teamMat); // team stripe
@@ -70,16 +71,17 @@ function build() {
   box(G, 0.9, 0.06, 3.2, W / 2 - 0.6, 1.7, 3.6, M.steel);
   for (let s = 0; s < 3; s++) for (let k = 0; k < 4; k++) tyre(G, W / 2 - 0.6, 0.18 + k * 0.37, 2.4 + s * 0.95, bands[s]);
   // pit lane, pit wall, track, grass and a grandstand out front
-  box(G, 70, 0.04, 10, 0, -0.02, Dfront - 5, M.asphalt);
-  box(G, 70, 0.006, 0.12, 0, 0.002, Dfront - 1.2, M.white);
-  box(G, 70, 0.006, 0.12, 0, 0.002, Dfront - 9.5, M.white);
+  box(G, 70, 0.2, 10, 0, -0.1, Dfront - 5, M.asphalt);
+  box(G, 70, 0.01, 0.12, 0, 0.005, Dfront - 1.2, M.paintWhite);
+  box(G, 70, 0.01, 0.12, 0, 0.005, Dfront - 9.5, M.paintWhite);
   box(G, 70, 1.1, 0.4, 0, 0.55, Dfront - 10.5, M.concrete);
   for (let x = -34; x <= 34; x += 3) box(G, 0.06, 2.4, 0.06, x, 2.3, Dfront - 10.5, M.steel);
-  box(G, 70, 0.04, 14, 0, -0.03, Dfront - 18, M.asphalt);
-  const grass = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), M.grass); grass.rotation.x = -Math.PI / 2; grass.position.y = -0.06; G.add(grass);
-  for (let k = 0; k < 7; k++) box(G, 80, 0.9 * (k + 1), 2.2, 0, 0.45 * (k + 1), Dfront - 34 - k * 2.2, M.stand);
+  box(G, 70, 0.2, 14, 0, -0.12, Dfront - 18, M.asphalt); // track surface 2 cm below the pit lane
+  const grass = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), M.grass); grass.rotation.x = -Math.PI / 2; grass.position.y = -0.35; G.add(grass); // well below everything, so it never flickers through at a distance
+  box(G, 80, 0.32, 9, 0, -0.19, Dfront - 29.5, M.grass); // verge between the track and the grandstand, level with the track
+  for (let k = 0; k < 7; k++) box(G, 80, 0.9 * (k + 1) + 0.35, 2.2, 0, 0.45 * (k + 1) - 0.175, Dfront - 34 - k * 2.2, M.stand); // down to the grass
   box(G, 84, 0.5, 18, 0, 9.5, Dfront - 40, M.roof);
-  for (const x of [-40, 0, 40]) box(G, 0.6, 9.5, 0.6, x, 4.75, Dfront - 48, M.steel);
+  for (const x of [-40, 0, 40]) box(G, 0.6, 9.85, 0.6, x, 4.575, Dfront - 48, M.steel);
   // sky
   const sky = new THREE.Mesh(new THREE.SphereGeometry(420, 32, 16), new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false,
@@ -183,7 +185,7 @@ function frame(dt) {
       // stand under the circuit model, sized to it
       const k = 1.1 * (xr ? App.tableScale : 1) * 0.97, topY = xr ? App.anchor.y : 0.75, tr = App.track;
       const wx = tr ? k * (tr.w / tr.extent + 0.1) : k, wz = tr ? k * (tr.d / tr.extent + 0.1) : k;
-      built.top.scale.set(wx, 0.05, wz); built.top.position.y = topY - 0.025;
+      built.top.scale.set(wx, 0.05, wz); built.top.position.y = topY - 0.003 - 0.025;
       built.edge.scale.set(wx * 0.92, Math.max(0.05, topY - 0.05), wz * 0.92); built.edge.position.y = (topY - 0.05) / 2;
       built.plinth.rotation.y = App.tableYaw - built.G.rotation.y; // follows the table when you turn it
       if ((monT += dt) > 0.5) { monT = 0; drawMonitor(built.mon); }

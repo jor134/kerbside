@@ -708,7 +708,7 @@ function rebuildModelTrack() {
   modelTrack = buildTrackMeshes(tr, hw, lift); modelGroup.add(modelTrack); modelTrack.visible = trackShown();
   const thick = 0.025 * tr.extent / TABLE_SIZE, mw = tr.w + tr.extent * 0.1, md = tr.d + tr.extent * 0.1;
   slab = new THREE.Mesh(new THREE.BoxGeometry(mw, thick, md), [slabEdgeMat, slabEdgeMat, slabMat, slabEdgeMat, slabEdgeMat, slabEdgeMat]);
-  slab.position.y = -thick / 2 - tr.extent * 0.0006; slab.userData.thick = thick;
+  slab.position.y = -thick / 2 - tr.extent * TABLE_GAP.slab; slab.userData.thick = thick;
   slab.visible = mode === 'model'; modelGroup.add(slab);
   modelGround.scale.set(tr.extent * 5, tr.extent * 5, 1);
   placeSat();
@@ -828,7 +828,7 @@ function setDrawTrack(on) {
 function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
 App.env = store.get('env', 'passthrough'); App.ptWindow = store.get('ptWindow', false); App.ptSize = store.get('ptSize', 'M');
 let garageLoading = null;
-const GARAGE_VER = '1';
+const GARAGE_VER = '2';
 function loadGarage() {
   if (window.KBGarage) return Promise.resolve();
   return garageLoading || (garageLoading = new Promise((res, rej) => {
@@ -889,16 +889,21 @@ function clearSatellite() {
   setAttrib('');
 }
 function reloadSatellite() { clearSatellite(); if (App.track) loadSatellite(App.track); }
+// Height gaps between the layers of the table model, as a share of the circuit's size. On a 1.1 m table
+// a gap of 0.0012 is about 1.3 mm: invisible, but enough for a headset's depth buffer to keep them apart.
+const TABLE_GAP = { ground: 0.0012, slab: 0.0025 };
 function placeSat() {
   if (!SAT.mesh || !App.track) return;
   const tr = App.track, real = modelTrackMode === 'real';
-  SAT.mesh.position.y = 0;
+  const off = real ? 0 : -tr.extent * TABLE_GAP.ground; // satellite ground sits just under the drawn track
+  SAT.mesh.position.y = off;
   SAT.mesh.visible = !(App.view === 'trackside' && !App.sky);
   if (SAT.skirt) {
     SAT.skirt.visible = !real;
-    const top = slab ? slab.position.y + slab.userData.thick / 2 : -tr.extent * 0.0006;
+    SAT.skirt.position.y = off;
+    const top = slab ? slab.position.y + slab.userData.thick / 2 : -tr.extent * TABLE_GAP.slab;
     const a = SAT.skirt.geometry.attributes.position;
-    for (let i = 1; i < a.count; i += 2) a.setY(i, top);
+    for (let i = 1; i < a.count; i += 2) a.setY(i, top - off);
     a.needsUpdate = true;
   }
 }
@@ -1114,7 +1119,7 @@ function layoutModel() {
     modelGroup.rotation.set(0, App.tableYaw, 0);
     if (renderer.xr.isPresenting && App.placed) {
       const thick = slab ? slab.userData.thick : 0;
-      modelGroup.position.set(App.anchor.x, App.anchor.y + (thick + tr.extent * 0.0006) * s, App.anchor.z);
+      modelGroup.position.set(App.anchor.x, App.anchor.y + (thick + tr.extent * TABLE_GAP.slab) * s, App.anchor.z);
     } else modelGroup.position.set(0, 0, 0);
   }
   const showSky = trackside && App.sky;
@@ -2107,7 +2112,14 @@ function drawBoard() {
 let frameNo = 0;
 let frameErrShown = false;
 renderer.setAnimationLoop((time, frame) => { try { frameBody(time, frame); } catch (err) { if (!frameErrShown) { frameErrShown = true; window.__kbErr(err.message + ' (in the render loop)'); console.error(err); } } });
+function setDepthRange() {
+  const xr = renderer.xr.isPresenting, drive = window.KBDrive && KBDrive.active;
+  const fullDrive = drive && (xr ? KBDrive._D.view !== 'rc' : false);
+  const near = xr ? 0.1 : 0.05, far = fullDrive ? 12000 : xr ? 1500 : (drive || panelView() ? 20000 : 3000);
+  if (camera.near !== near || camera.far !== far) { camera.near = near; camera.far = far; camera.updateProjectionMatrix(); }
+}
 function frameBody(time, frame) {
+  setDepthRange();
   const now = performance.now(), dt = Math.min(0.1, App.lastT ? (now - App.lastT) / 1000 : 0.016); App.lastT = now; frameNo++;
   if (window.KBHang) KBHang.frame(dt, frame); // voice and avatars keep running in every mode
   if (window.KBGarage) KBGarage.frame(dt);
