@@ -172,6 +172,11 @@ body:not(.board-open) #board{display:none}
   </section>
 
   <section>
+    <button id="driveBtn" class="primary">Drive this circuit</button>
+    <p class="hint">Time trials, the real field's fastest laps, computer rivals, or friends online.</p>
+  </section>
+
+  <section>
     <h3>View</h3>
     <div class="seg" id="viewSeg">
       <button data-view="tabletop" class="on">Tabletop</button>
@@ -667,7 +672,7 @@ function setTrack(tr) {
 }
 function rebuildModelTrack() {
   const tr = App.track; if (!tr) return;
-  const mode = App.view === 'trackside' ? 'real' : 'model';
+  const mode = (App.view === 'trackside' || App.forceRealModel) ? 'real' : 'model';
   if (mode === modelTrackMode) return;
   modelTrackMode = mode;
   App.latK = mode === 'real' ? 1 : Math.max(7, tr.extent * 0.0034) / 7;
@@ -1605,6 +1610,7 @@ function cycleChase(dir) {
   setChase(pool[i < 0 ? 0 : (i + dir + pool.length) % pool.length]);
 }
 addEventListener('keydown', e => {
+  if (window.KBDrive && KBDrive.active) return;
   if ((!panelView()) || /INPUT|SELECT/.test(document.activeElement && document.activeElement.tagName)) return;
   if (e.key === 'ArrowLeft') cycleChase(-1); else if (e.key === 'ArrowRight') cycleChase(1);
 });
@@ -1657,6 +1663,7 @@ function spread(list) {
   return { c, d: Math.hypot(list[0].x - list[1].x, list[0].y - list[1].y), a: Math.atan2(list[1].y - list[0].y, list[1].x - list[0].x) };
 }
 canvas.addEventListener('pointermove', e => {
+  if (window.KBDrive && KBDrive.active && !KBDrive.allowMapGestures()) return;
   const p = pointers.get(e.pointerId); if (!p) return;
   const before = [...pointers.values()].map(q => ({ x: q.x, y: q.y }));
   const dx = e.clientX - p.x, dy = e.clientY - p.y;
@@ -1696,6 +1703,7 @@ canvas.addEventListener('pointermove', e => {
 });
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
+  if (window.KBDrive && KBDrive.active && !KBDrive.allowMapGestures()) return;
   const f = Math.exp(e.deltaY * 0.001);
   if (mapGesture()) { const c = { x: e.clientX, y: e.clientY }; mapMove(c, c, f, 0, 0); }
   else zoom(f);
@@ -1849,6 +1857,7 @@ const controllers = [0, 1].map(i => {
 const raycaster = new THREE.Raycaster(), tmpM = new THREE.Matrix4();
 function rayFrom(c) { tmpM.identity().extractRotation(c.matrixWorld); raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld); raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tmpM); }
 function onSelect(e) {
+  if (window.KBDrive && KBDrive.active) { KBDrive.onSelect(e); return; }
   const c = e.target; rayFrom(c);
   const hit = raycaster.intersectObjects([uiMesh, chaseMesh, chaseLabel].filter(m => m.visible && (m !== chaseLabel || chaseMesh.visible)), false)[0];
   if (hit && hit.object === uiMesh && hit.uv) {
@@ -1859,10 +1868,18 @@ function onSelect(e) {
   }
   if (hit && (hit.object === chaseMesh || hit.object === chaseLabel) && hit.uv) { cycleChase(hit.uv.x < 0.5 ? -1 : 1); return; }
   if (hit) return;
-  if (App.placing && App.view !== 'trackside') {
-    if (reticle.visible) placeTabletop(new THREE.Vector3().setFromMatrixPosition(reticle.matrix));
-    else { const head = xrHead(), f = xrForward(); placeTabletop(head.clone().addScaledVector(f, 0.7).setY(Math.max(0.3, head.y - 0.55))); }
-  }
+  if (App.placing && App.view !== 'trackside') placeAtReticle();
+}
+function placeAtReticle() {
+  if (reticle.visible) placeTabletop(new THREE.Vector3().setFromMatrixPosition(reticle.matrix));
+  else { const head = xrHead(), f = xrForward(); placeTabletop(head.clone().addScaledVector(f, 0.7).setY(Math.max(0.3, head.y - 0.55))); }
+}
+function placementTick(frame) {
+  if (App.placing && hitSource && frame) {
+    const res = frame.getHitTestResults(hitSource);
+    if (res.length) { const pose = res[0].getPose(renderer.xr.getReferenceSpace()); if (pose) { reticle.visible = true; reticle.matrix.fromArray(pose.transform.matrix); } }
+    else reticle.visible = false;
+  } else reticle.visible = false;
 }
 function xrHead() { const cam = renderer.xr.getCamera(camera); return new THREE.Vector3().setFromMatrixPosition(cam.matrixWorld); }
 function xrForward() { const cam = renderer.xr.getCamera(camera); const f = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(cam.matrixWorld)); f.y = 0; return f.lengthSq() ? f.normalize() : new THREE.Vector3(0, 0, -1); }
@@ -1926,11 +1943,7 @@ function xrTick(frame, dt) {
   App.hoverPx = hp;
   if (key !== App.hoverKey) { App.hoverKey = key; drawXRPanel(); }
   if (hc !== App.hoverChase) { App.hoverChase = hc; drawChaseLabel(); }
-  if (App.placing && App.view !== 'trackside' && hitSource && frame) {
-    const res = frame.getHitTestResults(hitSource);
-    if (res.length) { const pose = res[0].getPose(renderer.xr.getReferenceSpace()); if (pose) { reticle.visible = true; reticle.matrix.fromArray(pose.transform.matrix); } }
-    else reticle.visible = false;
-  } else reticle.visible = false;
+  if (App.view !== 'trackside') placementTick(frame); else reticle.visible = false;
   const session = renderer.xr.getSession();
   if (session && (panelView())) {
     App.flick = App.flick || {};
@@ -2013,6 +2026,7 @@ let frameErrShown = false;
 renderer.setAnimationLoop((time, frame) => { try { frameBody(time, frame); } catch (err) { if (!frameErrShown) { frameErrShown = true; window.__kbErr(err.message + ' (in the render loop)'); console.error(err); } } });
 function frameBody(time, frame) {
   const now = performance.now(), dt = Math.min(0.1, App.lastT ? (now - App.lastT) / 1000 : 0.016); App.lastT = now; frameNo++;
+  if (window.KBDrive && KBDrive.active) { KBDrive.frame(dt, frame); return; }
   if (App.source === 'replay') Replay.tick(dt);
   if (App.source === 'live') Live.tick();
   if (now - App.uiT > 250) {
@@ -2131,10 +2145,37 @@ setPanels(true, !narrow()); // menu open on every screen size; on phones the ord
   try {
     App.arOK = await navigator.xr.isSessionSupported('immersive-ar');
     const vr = App.arOK || await navigator.xr.isSessionSupported('immersive-vr');
+    App.xrSupported = !!vr;
     if (vr) { b.disabled = false; b.textContent = App.arOK ? 'Enter mixed reality' : 'Enter VR'; b.onclick = enterXR; }
     else b.textContent = 'Open on Quest 3 for mixed reality';
   } catch (e) { b.textContent = 'Headset view unavailable'; }
 })();
+
+/* ---- Drive mode (separate file, loaded on first use) ---- */
+window.KB = {
+  THREE, App, $, store, toast, OF1, isoMs, iso, hexColor, lastLE, rr,
+  scene, renderer, camera, modelGroup, realWorld, REAL, onLayer, sky, modelGround, FOG, BG,
+  CarGeo, darkMat, CAR_LEN, labelSprite, modelCarLen, Cars, Replay, Live, orbit, flatCamTick,
+  Track, setTrack, cacheTrack, cachedTrack, sharedTrack, packTrack, outlineFromSession, relayInfo,
+  layoutModel, rebuildModelTrack, positionPanels, xrHead, xrForward, enterXR, placementTick, placeAtReticle,
+  uiMesh, chaseMesh, controllers, getSessions: () => sessions
+};
+const DRIVE_VER = '1';
+let driveLoading = null;
+function loadDrive() {
+  if (window.KBDrive) return Promise.resolve();
+  return driveLoading || (driveLoading = new Promise((res, rej) => {
+    const sc = document.createElement('script'); sc.src = 'drive.js?v=' + DRIVE_VER;
+    sc.onload = () => window.KBDrive ? res() : rej(new Error('drive mode did not start'));
+    sc.onerror = () => { driveLoading = null; rej(new Error('could not load drive mode')); };
+    document.head.appendChild(sc);
+  }));
+}
+$('#driveBtn').onclick = async () => {
+  const b = $('#driveBtn'); b.disabled = true; b.textContent = 'Loading…';
+  try { await loadDrive(); KBDrive.open(); } catch (e) { toast('Drive mode: ' + e.message + '.', 7000); }
+  b.disabled = false; b.textContent = 'Drive this circuit';
+};
 
 /* ---- Install as web app ---- */
 let installEvt = null;
