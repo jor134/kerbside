@@ -5,7 +5,7 @@
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const renderer = KB.renderer;
-const HANG_BUILD = 2;
+const HANG_BUILD = 3;
 const COLORS = ['#D2342B', '#F28A1E', '#E8C33A', '#2F8F4E', '#2BB5A0', '#2E6FD9', '#8E5BD6', '#E66BB0', '#C9CED3', '#F2F2EF'];
 
 const me = Object.assign({ name: '', color: COLORS[Math.floor(Math.random() * COLORS.length)], follow: true }, store.get('hang:me', {}));
@@ -259,14 +259,38 @@ function publishEnv(env) { if (isHost()) send({ t: 'env', env }); }
 /* ---------------- Avatars ---------------- */
 // Positions are shared relative to each person's table (metres from its centre, turned with it),
 // so everyone appears around your table wherever you placed it.
-const avatarGeo = {
-  head: new THREE.SphereGeometry(0.11, 18, 14),
-  visor: new THREE.BoxGeometry(0.17, 0.06, 0.06),
-  body: new THREE.CylinderGeometry(0.06, 0.15, 0.36, 14),
-  hand: new THREE.SphereGeometry(0.035, 12, 10),
-  ring: new THREE.TorusGeometry(0.16, 0.012, 8, 32)
-};
-const visorMat = new THREE.MeshToonMaterial({ color: 0x1c1f22 });
+// Race-driver avatars: helmet with a dark visor and a stripe in the person's colour, a suit in their colour
+// with white side stripes, collar, chest panel, cuffs and boot tops. No logos or badges.
+const AG = (() => {
+  const S = (r, ws, hs, ...a) => new THREE.SphereGeometry(r, ws, hs, ...a);
+  const C = (rt, rb, h, seg) => new THREE.CylinderGeometry(rt, rb, h, seg || 14);
+  const unit = g => { g.translate(0, 0.5, 0); return g; }; // limbs run from y = 0 to y = 1, then get stretched
+  const front = 1.5 * Math.PI; // the avatar faces -z
+  return {
+    helmet: S(0.135, 22, 16),
+    visor: S(0.139, 20, 6, front - 0.95, 1.9, 1.12, 0.42),
+    stripeTop: S(0.138, 4, 10, Math.PI / 2 - 0.16, 0.32, 0.05, 1.5),
+    stripeFront: S(0.138, 4, 8, front - 0.16, 0.32, 0.12, 0.95),
+    chin: S(0.137, 16, 4, front - 1.0, 2.0, 1.55, 0.5),
+    collar: C(0.07, 0.08, 0.07),
+    torso: C(0.165, 0.14, 0.42, 18),
+    chest: new THREE.BoxGeometry(0.17, 0.11, 0.02),
+    sideStripe: new THREE.BoxGeometry(0.03, 0.39, 0.07),
+    hips: C(0.14, 0.15, 0.15, 16),
+    upper: unit(C(0.05, 0.056, 1, 12)),
+    fore: unit(C(0.043, 0.05, 1, 12)),
+    thigh: unit(C(0.062, 0.078, 1, 12)),
+    shin: unit(C(0.05, 0.062, 1, 12)),
+    legStripe: unit(new THREE.BoxGeometry(0.022, 1, 0.045)),
+    glove: S(0.05, 12, 10),
+    cuff: C(0.052, 0.052, 0.035, 12),
+    boot: new THREE.BoxGeometry(0.105, 0.1, 0.26),
+    bootTop: new THREE.BoxGeometry(0.11, 0.035, 0.12),
+    ring: new THREE.TorusGeometry(0.19, 0.012, 8, 32)
+  };
+})();
+const visorMat = new THREE.MeshToonMaterial({ color: 0x15191c });
+const whiteMat = new THREE.MeshToonMaterial({ color: 0xf2f2ee });
 function nameSprite(name, color, muted) {
   const cv = document.createElement('canvas'); cv.width = 512; cv.height = 128; const x = cv.getContext('2d');
   x.font = '700 64px "Barlow Condensed", sans-serif';
@@ -284,21 +308,36 @@ function getAvatar(id) {
   const key = (peer.name || '') + '|' + (peer.color || '') + '|' + !!peer.muted;
   if (a && a.key === key) return a;
   if (a) dropAvatar(id);
-  const col = new THREE.Color(peer.color || '#9aa5ab');
-  const mat = new THREE.MeshToonMaterial({ color: col });
-  const bodyMat = new THREE.MeshToonMaterial({ color: col, transparent: true, opacity: 0.55 });
+  const suit = new THREE.MeshToonMaterial({ color: new THREE.Color(peer.color || '#9aa5ab') });
+  const M = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); if (x !== undefined) m.position.set(x, y, z); return m; };
   const g = new THREE.Group();
+  // head: helmet, visor, stripe over the top
   const head = new THREE.Group();
-  head.add(new THREE.Mesh(avatarGeo.head, mat));
-  const visor = new THREE.Mesh(avatarGeo.visor, visorMat); visor.position.set(0, 0.01, -0.09); head.add(visor);
-  const ring = new THREE.Mesh(avatarGeo.ring, new THREE.MeshBasicMaterial({ color: 0xE9E6DF, transparent: true, opacity: 0 }));
-  ring.rotation.x = Math.PI / 2; head.add(ring);
-  const body = new THREE.Mesh(avatarGeo.body, bodyMat);
-  const lh = new THREE.Mesh(avatarGeo.hand, mat), rh = new THREE.Mesh(avatarGeo.hand, mat);
+  head.add(M(AG.helmet, whiteMat), M(AG.visor, visorMat), M(AG.stripeTop, suit), M(AG.stripeFront, suit), M(AG.chin, suit));
+  const ring = M(AG.ring, new THREE.MeshBasicMaterial({ color: 0xE9E6DF, transparent: true, opacity: 0 }));
+  ring.rotation.x = Math.PI / 2; ring.position.y = 0.02; head.add(ring);
+  // torso, built facing -z: suit, white collar, chest panel and side stripes
+  const torso = new THREE.Group();
+  const tb = M(AG.torso, suit, 0, -0.21, 0); tb.scale.z = 0.72; torso.add(tb);
+  torso.add(M(AG.collar, whiteMat, 0, 0.025, 0), M(AG.chest, whiteMat, 0, -0.09, -0.118));
+  for (const sx of [-1, 1]) torso.add(M(AG.sideStripe, whiteMat, sx * 0.15, -0.22, 0));
+  const hp = M(AG.hips, suit, 0, -0.47, 0); hp.scale.z = 0.75; torso.add(hp);
+  // limbs: suit colour, white stripe down the outside of each leg, white cuffs and boot tops
+  const limb = (geo) => M(geo, suit);
+  const L = {}, R = {};
+  for (const [side, o] of [[-1, L], [1, R]]) {
+    o.upper = limb(AG.upper); o.fore = limb(AG.fore);
+    o.glove = new THREE.Group(); const gl = M(AG.glove, suit); gl.scale.set(1, 1.35, 0.75); o.glove.add(gl, M(AG.cuff, whiteMat, 0, -0.05, 0)); // cuff on the wrist side
+    o.thigh = limb(AG.thigh); o.shin = limb(AG.shin);
+    o.thigh.add(M(AG.legStripe, whiteMat, 0.068, 0, 0)); o.shin.add(M(AG.legStripe, whiteMat, 0.056, 0, 0));
+    o.boot = new THREE.Group(); o.boot.add(M(AG.boot, suit, 0, 0.05, -0.04), M(AG.bootTop, whiteMat, 0, 0.11, 0.02));
+    o.side = side; o.hand = null; o.foot = null;
+    g.add(o.upper, o.fore, o.glove, o.thigh, o.shin, o.boot);
+  }
   const label = nameSprite(peer.name || 'Friend', peer.color || '#9aa5ab', !!peer.muted);
-  g.add(head, body, lh, rh, label);
+  g.add(head, torso, label);
   KB.scene.add(g);
-  a = { g, head, body, lh, rh, ring, label, key, cur: null };
+  a = { g, head, torso, L, R, ring, label, key, cur: null };
   H.avatars.set(id, a);
   return a;
 }
@@ -341,6 +380,58 @@ function sendPose(frame) {
   send({ t: 'pose', p });
 }
 const tv = new THREE.Vector3(), tv2 = new THREE.Vector3();
+// Two-bone reach (shoulder to hand, hip to foot): returns the elbow or knee, bent towards "pole".
+const _d = new THREE.Vector3(), _p = new THREE.Vector3();
+function reach(A, T, l1, l2, pole, joint, end) {
+  _d.copy(T).sub(A); let d = _d.length() || 1e-4; _d.multiplyScalar(1 / d);
+  d = Math.max(Math.abs(l1 - l2) + 1e-3, Math.min(l1 + l2 - 1e-3, d));
+  const a = (l1 * l1 + d * d - l2 * l2) / (2 * d), h = Math.sqrt(Math.max(0, l1 * l1 - a * a));
+  _p.copy(pole).addScaledVector(_d, -pole.dot(_d)); if (_p.lengthSq() < 1e-6) _p.set(0, -1, 0); _p.normalize();
+  joint.copy(A).addScaledVector(_d, a).addScaledVector(_p, h);
+  end.copy(A).addScaledVector(_d, d);
+}
+// Point a unit limb from A to B, keeping its outside face (for the leg stripe) towards "out".
+const _m = new THREE.Matrix4(), _x = new THREE.Vector3(), _y = new THREE.Vector3(), _z = new THREE.Vector3();
+function setLimb(mesh, A, B, out) {
+  _y.copy(B).sub(A); const len = _y.length() || 1e-4; _y.multiplyScalar(1 / len);
+  _x.copy(out).addScaledVector(_y, -out.dot(_y)); if (_x.lengthSq() < 1e-6) _x.set(1, 0, 0); _x.normalize();
+  _z.crossVectors(_x, _y);
+  _m.makeBasis(_x, _y, _z); mesh.quaternion.setFromRotationMatrix(_m);
+  mesh.position.copy(A); mesh.scale.set(1, len, 1);
+}
+const V = () => new THREE.Vector3();
+const P = { fwd: V(), right: V(), neck: V(), sh: V(), hip: V(), el: V(), hand: V(), kn: V(), foot: V(), tgt: V(), pole: V(), out: V(), down: new THREE.Vector3(0, -1, 0) };
+function poseBody(a, d, T, fx, fz, dt) {
+  const floorY = renderer.xr.isPresenting ? 0 : -0.78; // the real floor in the headset; under the table on screens
+  P.fwd.set(fx, 0, fz); if (P.fwd.lengthSq() < 1e-6) P.fwd.set(0, 0, -1); P.fwd.normalize();
+  P.right.set(-P.fwd.z, 0, P.fwd.x);
+  const yaw = Math.atan2(-P.fwd.x, -P.fwd.z);
+  P.neck.copy(a.cur).addScaledVector(P.fwd, -0.03); P.neck.y -= 0.15;
+  a.torso.position.copy(P.neck); a.torso.rotation.set(0, yaw, 0);
+  P.hip.copy(P.neck); P.hip.y -= 0.48;
+  for (const o of [a.L, a.R]) {
+    const sd = o.side;
+    // arm: shoulder to the tracked hand, or resting in front at table height
+    P.sh.copy(P.neck).addScaledVector(P.right, sd * 0.2); P.sh.y -= 0.06;
+    const loc = d && (sd < 0 ? d.l : d.r);
+    if (loc) toWorld(T, loc, P.tgt);
+    else { P.tgt.copy(P.sh).addScaledVector(P.fwd, 0.32).addScaledVector(P.right, -sd * 0.08); P.tgt.y = T.pos.y + 0.05; } // resting on the table edge
+    if (!o.hand) o.hand = P.tgt.clone(); else o.hand.lerp(P.tgt, Math.min(1, dt * 14));
+    P.pole.copy(P.down).addScaledVector(P.right, sd * 0.7).addScaledVector(P.fwd, -0.3);
+    reach(P.sh, o.hand, 0.29, 0.27, P.pole, P.el, P.hand);
+    P.out.copy(P.right).multiplyScalar(sd);
+    setLimb(o.upper, P.sh, P.el, P.out); setLimb(o.fore, P.el, P.hand, P.out);
+    o.glove.position.copy(P.hand); o.glove.quaternion.copy(o.fore.quaternion); o.glove.translateY(0.03);
+    // leg: stands straight when the hips are high enough, otherwise sits with knees forward
+    const hipJ = P.tgt.copy(P.hip).addScaledVector(P.right, sd * 0.09); hipJ.y -= 0.04;
+    const LEG = 0.84, hipH = hipJ.y - floorY - 0.07, k = Math.sqrt(Math.max(0, LEG * LEG - Math.min(LEG * LEG, hipH * hipH))) * 0.9;
+    const foot = tv2.copy(hipJ).addScaledVector(P.fwd, k).addScaledVector(P.right, sd * 0.03); foot.y = floorY + 0.07;
+    if (!o.foot) o.foot = foot.clone(); else o.foot.lerp(foot, Math.min(1, dt * 10));
+    reach(hipJ, o.foot, 0.42, 0.42, P.fwd, P.kn, P.foot);
+    setLimb(o.thigh, hipJ, P.kn, P.out); setLimb(o.shin, P.kn, P.foot, P.out);
+    o.boot.position.set(P.foot.x, P.foot.y - 0.07, P.foot.z); o.boot.rotation.set(0, yaw, 0);
+  }
+}
 function updateAvatars(dt) {
   const T = tableFrame(), driving = window.KBDrive && KBDrive.active;
   const show = T && App.view === 'tabletop' && !driving && App.track;
@@ -353,19 +444,11 @@ function updateAvatars(dt) {
     const hLoc = d ? d.h : seat.h, fLoc = d ? d.f : seat.f;
     toWorld(T, hLoc, tv);
     if (!a.cur) a.cur = tv.clone(); else a.cur.lerp(tv, Math.min(1, dt * 12));
-    a.head.position.copy(a.cur);
     const [fx, fz] = rotY(fLoc[0], fLoc[2], T.yaw);
-    a.head.rotation.set(0, Math.atan2(-fx, -fz), 0);
-    a.body.position.set(a.cur.x, a.cur.y - 0.3, a.cur.z);
-    a.label.position.set(a.cur.x, a.cur.y + 0.22, a.cur.z);
-    const hands = [[a.lh, d && d.l, -1], [a.rh, d && d.r, 1]];
-    for (const [m, loc, side] of hands) {
-      if (loc) { toWorld(T, loc, tv2); m.position.lerp(tv2, Math.min(1, dt * 14)); m.visible = true; }
-      else { // resting hands in front of a seated person
-        const [sx, sz] = rotY(side * 0.14, -0.18, Math.atan2(-fx, -fz));
-        m.position.set(a.cur.x + sx, a.cur.y - 0.32, a.cur.z + sz); m.visible = true;
-      }
-    }
+    a.head.position.copy(a.cur);
+    a.head.rotation.set(Math.asin(Math.max(-0.9, Math.min(0.9, fLoc[1] || 0))) * 0.8, Math.atan2(-fx, -fz), 0, 'YXZ');
+    poseBody(a, d, T, fx, fz, dt);
+    a.label.position.set(a.cur.x, a.cur.y + 0.26, a.cur.z);
     const au = H.audio.get(p.id), lvl = au && !p.muted ? au.level() : 0;
     a.ring.material.opacity = Math.min(0.9, lvl * 1.6);
     a.ring.scale.setScalar(1 + lvl * 0.35);
