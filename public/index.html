@@ -427,11 +427,13 @@ function relayInfo() {
   const base = (store.get('relayUrl', '') || location.origin).replace(/\/+$/, '');
   return /^https?:/.test(base) ? { base, key } : null;
 }
-const sharedTried = new Set();
-async function sharedTrack(circuitKey) {
-  const r = relayInfo(); if (!r || circuitKey == null) return null;
+const sharedTried = new Set(), replaceShared = new Set();
+async function sharedTrack(circuitKey) { // works without a relay key: outlines are open to read
+  if (circuitKey == null) return null;
+  const base = (store.get('relayUrl', '') || location.origin).replace(/\/+$/, '');
+  if (!/^https?:/.test(base)) return null;
   try {
-    const res = await fetch(`${r.base}/track?circuit=${encodeURIComponent(circuitKey)}&key=${encodeURIComponent(r.key)}`, { cache: 'no-store' });
+    const res = await fetch(`${base}/track?circuit=${encodeURIComponent(circuitKey)}`, { cache: 'no-store' });
     if (!res.ok) return null;
     const a = await res.json();
     const tr = new Track(a.map(p => ({ x: p[0], y: p[1], z: p[2] })), circuitKey);
@@ -443,10 +445,11 @@ async function sharedTrack(circuitKey) {
 function shareTrack(tr) {
   const r = relayInfo(); if (!r || tr.circuitKey == null || sharedTried.has(String(tr.circuitKey))) return;
   sharedTried.add(String(tr.circuitKey));
-  fetch(`${r.base}/track?circuit=${encodeURIComponent(tr.circuitKey)}&key=${encodeURIComponent(r.key)}`,
+  const replace = replaceShared.delete(String(tr.circuitKey)) ? '&replace=1' : '';
+  fetch(`${r.base}/track?circuit=${encodeURIComponent(tr.circuitKey)}&key=${encodeURIComponent(r.key)}${replace}`,
     { method: 'PUT', body: JSON.stringify(packTrack(tr)), headers: { 'content-type': 'application/json' } }).catch(() => {});
 }
-function forgetSharedTrack(circuitKey) { sharedTried.delete(String(circuitKey)); }
+function forgetSharedTrack(circuitKey) { sharedTried.delete(String(circuitKey)); replaceShared.add(String(circuitKey)); }
 function cachedTrack(key) {
   const a = store.get('track:' + key, null);
   if (!a) return null;
