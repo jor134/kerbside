@@ -9,14 +9,16 @@ const TOPICS = [
   'SessionInfo', 'SessionStatus', 'TrackStatus', 'LapCount',
   'RaceControlMessages', 'ExtrapolatedClock', 'WeatherData'
 ];
-const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS' };
+const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET, PUT, POST, OPTIONS' };
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     const keys = String(env.RELAY_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
-    if (keys.length && !keys.includes(url.searchParams.get('key'))) {
+    // Circuit outlines aren't secret: anyone using the app can read them, so Replay works without a key.
+    const open = request.method === 'GET' && (url.pathname === '/track' || url.pathname === '/tracks');
+    if (!open && keys.length && !keys.includes(url.searchParams.get('key'))) {
       return new Response('Wrong or missing relay key', { status: 401, headers: CORS });
     }
     if (url.pathname === '/hang') { // watch-together rooms with voice, one per 4-letter code
@@ -41,6 +43,10 @@ export default {
       }
       return stub.fetch(request);
     }
+    if (url.pathname === '/tracks' || url.pathname === '/tracks/fill') {
+      const r = await stub.fetch(new Request(url.origin + (url.pathname === '/tracks' ? '/tracks' : '/fill')));
+      return new Response(r.body, { status: r.status, headers: { ...CORS, 'content-type': 'application/json', 'cache-control': 'no-store' } });
+    }
     if (url.pathname === '/status' || url.pathname === '/track') {
       const r = await stub.fetch(new Request(url.origin + url.pathname + url.search, {
         method: request.method, body: request.method === 'PUT' ? await request.text() : undefined
@@ -48,8 +54,40 @@ export default {
       return new Response(r.body, { status: r.status, headers: { ...CORS, 'content-type': 'application/json', 'cache-control': 'no-store' } });
     }
     return new Response('Kerbside relay is running.', { headers: CORS });
+  },
+  // Hourly (see [triggers] in wrangler.toml): save any circuit outlines still missing, a few at a time.
+  async scheduled(event, env, ctx) {
+    const stub = env.RELAY.get(env.RELAY.idFromName('live'));
+    ctx.waitUntil(stub.fetch('https://relay/fill').then(r => r.text()).catch(() => {}));
   }
 };
+
+/* ---------- Circuit outlines from OpenF1, saved ahead of time ---------- */
+const OPENF1 = 'https://api.openf1.org/v1';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const isoMs = s => { if (!s) return NaN; s = String(s).replace(/(\.\d{3})\d+/, '$1'); if (!/(Z|[+-]\d\d:?\d\d)$/i.test(s)) s += 'Z'; return Date.parse(s); };
+async function of1(path) {
+  const r = await fetch(OPENF1 + path, { headers: { 'User-Agent': 'kerbside-relay' } });
+  if (r.status === 404) return [];
+  if (!r.ok) throw new Error('OpenF1 HTTP ' + r.status + ' for ' + path.split('?')[0]);
+  const j = await r.json();
+  return Array.isArray(j) ? j : [];
+}
+// One lap of car positions turned into an outline: points at least 2 m apart, the loop closed, sane size.
+function lapToOutline(loc) {
+  const pts = [];
+  for (const p of loc) {
+    if (!p.x && !p.y) continue;
+    const x = p.x / 10, y = p.y / 10, z = (p.z || 0) / 10, l = pts[pts.length - 1];
+    if (!l || Math.hypot(x - l[0], y - l[1]) > 2) pts.push([Math.round(x * 10) / 10, Math.round(y * 10) / 10, Math.round(z * 10) / 10]);
+  }
+  while (pts.length > 60 && Math.hypot(pts[pts.length - 1][0] - pts[0][0], pts[pts.length - 1][1] - pts[0][1]) < 10) pts.pop();
+  if (pts.length < 60 || pts.length > 8000) return null;
+  let len = 0; for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  const gap = Math.hypot(pts[pts.length - 1][0] - pts[0][0], pts[pts.length - 1][1] - pts[0][1]);
+  if (len < 2500 || len > 8500 || gap > 250) return null; // not a whole lap of a real circuit
+  return pts;
+}
 
 // Voice connection servers. With a Cloudflare TURN key set (TURN_KEY_ID and TURN_KEY_API_TOKEN secrets),
 // voice also works on networks that block direct connections. Credentials are short-lived and cached.
@@ -170,6 +208,80 @@ export class F1Relay extends DurableObject {
     }
   }
 
+  async outlineFromRace(sk, get) {
+    // A handful of laps by lap number keeps each download small (one row per driver).
+    for (const lapNo of [12, 20, 6, 30]) {
+      const laps = (await get(`/laps?session_key=${sk}&lap_number=${lapNo}`)).filter(l => l.lap_duration > 30 && !l.is_pit_out_lap && l.date_start);
+      if (laps.length < 3) continue;
+      const durs = laps.map(l => l.lap_duration).sort((a, b) => a - b), med = durs[durs.length >> 1];
+      const cands = laps.filter(l => l.lap_duration > med * 0.9 && l.lap_duration < med * 1.04).sort((a, b) => a.lap_duration - b.lap_duration);
+      for (const lap of cands.slice(0, 2)) {
+        const s0 = isoMs(lap.date_start), e0 = s0 + lap.lap_duration * 1000 + 300;
+        const loc = await get(`/location?session_key=${sk}&driver_number=${lap.driver_number}&date>=${encodeURIComponent(new Date(s0).toISOString())}&date<=${encodeURIComponent(new Date(e0).toISOString())}`);
+        const pts = lapToOutline(loc);
+        if (pts) return pts;
+      }
+    }
+    return null;
+  }
+
+  // Finds the most recent race at every circuit from the last three seasons and saves its outline,
+  // unless one is already saved from that race or newer. Limited per run to stay inside Cloudflare's
+  // per-request limits; the hourly schedule finishes the rest.
+  async fillTracks() {
+    const st = this.ctx.storage, now = Date.now(), year = new Date().getUTCFullYear(), BUDGET = 40;
+    let calls = 0;
+    const get = async p => { if (calls >= BUDGET) throw new Error('budget'); calls++; await sleep(350); return of1(p); };
+    let races = await st.get('races');
+    try {
+      if (!races || now - races.at > 12 * 3600e3) {
+        const list = [];
+        for (const y of [year, year - 1, year - 2]) list.push(...await get(`/sessions?year=${y}&session_name=Race`));
+        races = { at: now, list: list.filter(s => s.circuit_key != null && isoMs(s.date_end) < now - 3 * 3600e3)
+          .map(s => ({ sk: s.session_key, ck: s.circuit_key, name: s.circuit_short_name || s.location || String(s.circuit_key), end: isoMs(s.date_end) })) };
+        if (races.list.length) await st.put('races', races);
+      }
+    } catch (e) {
+      if (!races) return { error: 'Could not reach OpenF1: ' + e.message + '. It locks free data during live sessions; the next hourly run will retry.' };
+    }
+    const latest = new Map();
+    for (const r of races.list) { const p = latest.get(r.ck); if (!p || r.end > p.end) latest.set(r.ck, r); }
+    const done = [], failed = [];
+    for (const [ck, race] of latest) {
+      const meta = await st.get('trackmeta:' + ck), have = await st.get('track:' + ck);
+      if (have && (!meta || meta.from === 'device' || meta.from >= race.sk)) continue; // up to date
+      const fail = await st.get('trackfail:' + ck);
+      if (fail && fail.sk === race.sk && now - fail.at < 24 * 3600e3) continue; // tried today
+      if (calls > BUDGET - 4) break;
+      try {
+        const pts = await this.outlineFromRace(race.sk, get);
+        if (pts) {
+          await st.put('track:' + ck, pts);
+          await st.put('trackmeta:' + ck, { from: race.sk, name: race.name, at: now, points: pts.length });
+          done.push(race.name);
+        } else { await st.put('trackfail:' + ck, { sk: race.sk, at: now }); failed.push(race.name); }
+      } catch (e) {
+        if (e.message === 'budget') break;
+        await st.put('trackfail:' + ck, { sk: race.sk, at: now }); failed.push(race.name + ' (' + e.message + ')');
+      }
+    }
+    const saved = await st.list({ prefix: 'track:' });
+    const remaining = Math.max(0, latest.size - saved.size);
+    return { savedNow: done, failed, saved: saved.size, circuits: latest.size, openf1Calls: calls, remaining,
+      next: !remaining ? 'Every circuit is saved.' : remaining <= failed.length ? remaining + ' circuit(s) have no usable lap data on OpenF1 yet; they are retried daily.' : 'The hourly run saves more; or open this page again.' };
+  }
+
+  async listTracks() {
+    const st = this.ctx.storage, metas = await st.list({ prefix: 'trackmeta:' }), tracks = await st.list({ prefix: 'track:' });
+    const out = [];
+    for (const [k] of tracks) {
+      const ck = k.slice(6), m = metas.get('trackmeta:' + ck) || {};
+      out.push({ circuit: ck, name: m.name || null, source: m.from === 'device' || !m.from ? 'a device' : 'race ' + m.from, saved: m.at ? new Date(m.at).toISOString().slice(0, 10) : null });
+    }
+    out.sort((a, b) => String(a.name || a.circuit).localeCompare(String(b.name || b.circuit)));
+    return { count: out.length, circuits: out };
+  }
+
   async trackRequest(request, url) {
     const circuit = String(url.searchParams.get('circuit') || '').replace(/[^\w-]/g, '').slice(0, 40);
     if (!circuit) return new Response('{"error":"missing circuit"}', { status: 400 });
@@ -178,7 +290,11 @@ export class F1Relay extends DurableObject {
       let pts;
       try { pts = JSON.parse(await request.text()); } catch (e) { return new Response('{"error":"bad json"}', { status: 400 }); }
       if (!validOutline(pts)) return new Response('{"error":"bad outline"}', { status: 400 });
+      // A device only fills a gap, or replaces an outline it found doesn't match the live cars.
+      if (url.searchParams.get('replace') !== '1' && await this.ctx.storage.get(k)) return new Response('{"ok":true,"kept":"existing"}');
       await this.ctx.storage.put(k, pts);
+      const old = await this.ctx.storage.get('trackmeta:' + circuit);
+      await this.ctx.storage.put('trackmeta:' + circuit, { from: 'device', name: old && old.name, at: Date.now(), points: pts.length });
       return new Response('{"ok":true}');
     }
     const pts = await this.ctx.storage.get(k);
@@ -189,6 +305,10 @@ export class F1Relay extends DurableObject {
     const url = new URL(request.url);
     if (url.pathname === '/status') return Response.json(this.statusObj());
     if (url.pathname === '/track') return this.trackRequest(request, url);
+    if (url.pathname === '/tracks') return Response.json(await this.listTracks());
+    if (url.pathname === '/fill') {
+      try { return Response.json(await this.fillTracks()); } catch (e) { return Response.json({ error: String(e.message || e) }, { status: 500 }); }
+    }
 
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
@@ -453,7 +573,7 @@ export class HangRoom extends DurableObject {
     this.peers.set(id, { ws: server, name: 'Friend ' + id, color: '#9aa5ab', device: 'screen', muted: false });
     if (this.host == null || !this.peers.has(this.host)) this.host = id;
     const r = this.roster();
-    this.send(server, { t: 'welcome', you: id, host: this.host, peers: r.peers, watch: this.watch });
+    this.send(server, { t: 'welcome', you: id, host: this.host, peers: r.peers, watch: this.watch, env: this.env || null });
     this.broadcast(r, id);
     server.addEventListener('message', e => this.onMsg(id, e.data));
     const leave = () => this.leave(id);
@@ -464,7 +584,7 @@ export class HangRoom extends DurableObject {
   leave(id) {
     if (!this.peers.delete(id)) return;
     if (this.host === id) this.host = this.peers.size ? this.peers.keys().next().value : null;
-    if (!this.peers.size) { this.watch = null; return; }
+    if (!this.peers.size) { this.watch = null; this.env = null; return; }
     this.broadcast({ t: 'left', id });
     this.broadcast(this.roster());
   }
@@ -492,6 +612,11 @@ export class HangRoom extends DurableObject {
         if (id !== this.host || !m.w) return;
         this.watch = m.w;
         this.broadcast({ t: 'watch', w: m.w }, id);
+        break;
+      case 'env':
+        if (id !== this.host || (m.env !== 'garage' && m.env !== 'passthrough')) return;
+        this.env = m.env;
+        this.broadcast({ t: 'env', env: m.env }, id);
         break;
       case 'ping':
         this.send(p.ws, { t: 'pong', c: m.c, s: Date.now() });
