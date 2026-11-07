@@ -76,6 +76,9 @@ const WX = { 0: 'Clear', 1: 'Mostly clear', 2: 'Partly cloudy', 3: 'Overcast', 4
   71: 'Light snow', 73: 'Snow', 75: 'Heavy snow', 77: 'Snow grains', 80: 'Light showers', 81: 'Showers', 82: 'Heavy showers',
   85: 'Snow showers', 86: 'Snow showers', 95: 'Thunderstorms', 96: 'Thunderstorms with hail', 99: 'Thunderstorms with hail' };
 export const wxText = c => WX[c] || 'Unknown';
+// One emoji per WMO weather code, so a notification reads at a glance.
+export const wxEmoji = c => c >= 95 ? '⛈️' : c >= 85 ? '🌨️' : c >= 80 ? '🌦️' : c >= 71 ? '❄️' : c >= 61 ? '🌧️' : c >= 51 ? '🌦️' : c >= 45 ? '🌫️' : c === 3 ? '☁️' : c === 2 ? '⛅' : c === 1 ? '🌤️' : '☀️';
+const CAT_EMOJI = { dry: '☀️', showers: '🌦️', wet: '🌧️', storm: '⛈️' };
 const CAT_TEXT = { dry: 'dry', showers: 'showers possible', wet: 'rain likely', storm: 'thunderstorms likely' };
 
 // F1's own season index lists every weekend of the year with session times, including ones not raced yet.
@@ -209,16 +212,16 @@ export function evaluate(prev, meeting, sums, fc, now) {
     if (soon && o.cat !== w.cat) {
       const wetNow = w.cat === 'wet' || w.cat === 'storm', wetBefore = o.cat === 'wet' || o.cat === 'storm';
       const body = `${w.text}, ${w.prob}% chance of rain, ${w.temp}°C, gusts to ${w.gust} km/h.`;
-      if (wetNow && !wetBefore) alerts.push({ type: 'rainSession', also: 'change', title: `${where}: rain likely for ${s.name}`, body, tag: 'wx-' + s.sk, session: s });
-      else if (!wetNow && wetBefore) alerts.push({ type: 'rainSession', also: 'change', title: `${where}: ${s.name} now looks ${CAT_TEXT[w.cat]}`, body, tag: 'wx-' + s.sk, session: s });
-      else if (o.cat) alerts.push({ type: 'change', title: `${where}: ${s.name} forecast changed`, body: `Was ${CAT_TEXT[o.cat]}, now ${CAT_TEXT[w.cat]}. ${body}`, tag: 'wx-' + s.sk, session: s });
+      if (wetNow && !wetBefore) alerts.push({ type: 'rainSession', also: 'change', title: `${wxEmoji(w.code)} ${where}: rain likely for ${s.name}`, body, tag: 'wx-' + s.sk, session: s });
+      else if (!wetNow && wetBefore) alerts.push({ type: 'rainSession', also: 'change', title: `${wxEmoji(w.code)} ${where}: ${s.name} now looks ${CAT_TEXT[w.cat]}`, body, tag: 'wx-' + s.sk, session: s });
+      else if (o.cat) alerts.push({ type: 'change', title: `${CAT_EMOJI[o.cat]}→${wxEmoji(w.code)} ${where}: ${s.name} forecast changed`, body: `Was ${CAT_TEXT[o.cat]}, now ${CAT_TEXT[w.cat]}. ${body}`, tag: 'wx-' + s.sk, session: s });
     }
     if (soon) {
       const sev = [];
-      if (w.gust >= 60 && !ns.severe.wind) { ns.severe.wind = 1; sev.push(`gusts up to ${w.gust} km/h`); }
-      if (w.temp >= 35 && !ns.severe.heat) { ns.severe.heat = 1; sev.push(`heat up to ${w.temp}°C`); }
-      if (w.cat === 'storm' && !ns.severe.storm) { ns.severe.storm = 1; sev.push('thunderstorms'); }
-      if (sev.length) alerts.push({ type: 'severe', title: `${where}: severe weather for ${s.name}`, body: 'Expect ' + sev.join(', ') + '.', tag: 'wxs-' + s.sk, urgent: true, session: s });
+      if (w.gust >= 60 && !ns.severe.wind) { ns.severe.wind = 1; sev.push(`💨 gusts up to ${w.gust} km/h`); }
+      if (w.temp >= 35 && !ns.severe.heat) { ns.severe.heat = 1; sev.push(`🥵 heat up to ${w.temp}°C`); }
+      if (w.cat === 'storm' && !ns.severe.storm) { ns.severe.storm = 1; sev.push('⛈️ thunderstorms'); }
+      if (sev.length) alerts.push({ type: 'severe', title: `⚠️ ${where}: severe weather for ${s.name}`, body: 'Expect ' + sev.join(', ') + '.', tag: 'wxs-' + s.sk, urgent: true, session: s });
     }
   }
   // rain at the circuit within the hour, during the race weekend (from the day before the first session)
@@ -232,7 +235,7 @@ export function evaluate(prev, meeting, sums, fc, now) {
     }
     if (nowP < 0.1 && next >= 0.3) {
       st.rainSoonAt = now;
-      alerts.push({ type: 'rainSoon', title: `${where}: rain within the hour`, body: `About ${Math.round(next * 10) / 10} mm expected at the circuit in the next hour.`, tag: 'wx-soon', urgent: true });
+      alerts.push({ type: 'rainSoon', title: `☔ ${where}: rain within the hour`, body: `About ${Math.round(next * 10) / 10} mm expected at the circuit in the next hour.`, tag: 'wx-soon', urgent: true });
     }
   }
   return { alerts, state: st };
@@ -243,10 +246,10 @@ export function dailyMessage(meeting, sums, tz, now) {
   for (const s of meeting.sessions) {
     if (s.end < now || s.start - now > 48 * 3600e3) continue;
     const w = sums[s.sk]; if (!w) continue;
-    lines.push(`${s.name} (${fmt.format(new Date(s.start))}): ${w.text}, ${w.temp}°C, rain ${w.prob}%`);
+    lines.push(`${wxEmoji(w.code)} ${s.name} (${fmt.format(new Date(s.start))}): ${w.text}, ${w.temp}°C, 💧${w.prob}%`);
   }
   if (!lines.length) return null;
-  return { type: 'daily', title: `${meeting.location} weather`, body: lines.join('\n'), tag: 'wx-daily' };
+  return { type: 'daily', title: `🏁 ${meeting.location} weather`, body: lines.join('\n'), tag: 'wx-daily' };
 }
 const localParts = (tz, t) => {
   const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(t)).map(x => [x.type, x.value]));
@@ -282,7 +285,7 @@ export async function weatherRun(storage, now = Date.now()) {
       const lp = localParts(rec.tz || 'UTC', now);
       if (lp.hour === 8 && rec.dailySent !== lp.day) { const d = dailyMessage(meeting, sums, rec.tz || 'UTC', now); if (d) mine.unshift(d); rec.dailySent = lp.day; await storage.put(k, rec); }
     }
-    const batch = mine.length > 3 ? [{ title: `${meeting.location}: ${mine.length} weather updates`, body: mine.map(a => a.title.replace(meeting.location + ': ', '')).join('\n'), tag: 'wx-many' }] : mine;
+    const batch = mine.length > 3 ? [{ title: `${mine.some(a => a.urgent) ? '⚠️' : '🏁'} ${meeting.location}: ${mine.length} weather updates`, body: mine.map(a => a.title.replace(meeting.location + ': ', '')).join('\n'), tag: 'wx-many' }] : mine;
     for (const a of batch) {
       const r = await sendPush(v, rec.sub, { title: a.title, body: a.body, tag: a.tag, url: '/?weather=1', urgent: !!a.urgent }, subject);
       if (r === 'gone') { await storage.delete(k); gone++; break; }
@@ -315,7 +318,7 @@ export async function weatherRequest(storage, request, url) {
     await storage.put(k, { sub: { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } }, prefs, tz, dailySent: old && old.dailySent, since: (old && old.since) || Date.now() });
     if (b.origin && /^https:\/\//.test(b.origin)) await storage.put('wx:origin', b.origin);
     if (b.test) {
-      const v = await vapidKeys(storage), r = await sendPush(v, (await storage.get(k)).sub, { title: 'Kerbside weather alerts are on', body: 'You’ll get the alerts you picked for each Grand Prix weekend.', tag: 'wx-test', url: '/?weather=1' }, (await storage.get('wx:origin')) || 'mailto:kerbside@invalid.example');
+      const v = await vapidKeys(storage), r = await sendPush(v, (await storage.get(k)).sub, { title: '🏁 Kerbside weather alerts are on', body: 'You’ll get the alerts you picked for each Grand Prix weekend.', tag: 'wx-test', url: '/?weather=1' }, (await storage.get('wx:origin')) || 'mailto:kerbside@invalid.example');
       return Response.json({ ok: true, test: r });
     }
     return Response.json({ ok: true });
