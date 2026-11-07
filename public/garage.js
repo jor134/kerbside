@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 4;
+const GARAGE_BUILD = 5;
 
 /* ---------------- Materials ---------------- */
 const toon = c => new THREE.MeshToonMaterial({ color: c });
@@ -124,7 +124,6 @@ function build() {
   box(G, 7.4, 0.06, 0.06, 0, S.floor + 1.05, Z.wall + 1.45, M.steel); // handrail on the pit-lane side
   box(G, 7.8, 0.15, 2.6, 0, 3.95, Z.wall + 0.4, M.dark);
   box(G, 7.8, 0.32, 0.06, 0, 3.8, Z.wall + 1.7, teamMat);
-  box(G, 7.2, 0.86, 0.1, 0, S.screenY, Z.wall - 0.3, M.dark); // backing for the screens
   // steps up from the pit lane
   for (let k = 0; k < 5; k++) box(G, 1.0, 0.22, 0.3, -4.2, 0.11 + k * 0.22, Z.wall + 2.2 - k * 0.3, M.steel);
   // sky
@@ -142,23 +141,29 @@ function build() {
   G.add(plinth);
   // screens: a video wall in the garage and a row on the pitwall, sharing the same pictures
   const keep = new Set([sky, plinth, car]);
-  const screen = (tex, w, h, x, y, z, tilt) => {
+  // Offsets are measured in the (possibly tilted) screen's own plane: du up the screen, dn out of it,
+  // so frames, backing and labels stay flush with a tilted screen instead of poking through it.
+  const along = (x, y, z, t, du, dn) => [x, y + du * Math.cos(t) - dn * Math.sin(t), z + du * Math.sin(t) + dn * Math.cos(t)];
+  const screen = (tex, w, h, x, y, z, tilt = 0) => {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex }));
-    m.position.set(x, y, z); if (tilt) m.rotation.x = tilt; G.add(m); keep.add(m);
-    box(G, w + 0.06, h + 0.06, 0.05, x, y, z - 0.035, M.dark).rotation.x = tilt || 0;
+    m.position.set(x, y, z); m.rotation.x = tilt; G.add(m); keep.add(m);
+    box(G, w + 0.06, h + 0.06, 0.04, ...along(x, y, z, tilt, 0, -0.03), M.dark).rotation.x = tilt; // frame, just behind the picture
     return m;
   };
-  const camLabel = (lab, w, x, y, z, tilt) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, w * 0.11), new THREE.MeshBasicMaterial({ map: lab.tex, transparent: true }));
-    m.position.set(x, y, z + 0.01); if (tilt) m.rotation.x = tilt; G.add(m); keep.add(m); };
-  const SW = 1.9, SH = 1.18, SY = 3.05, SZ = -3.14;
+  const camLabel = (lab, w, h, x, y, z, tilt = 0) => { // strip along the bottom of a camera screen
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, w * 0.11), new THREE.MeshBasicMaterial({ map: lab.tex, transparent: true }));
+    m.position.set(...along(x, y, z, tilt, -h / 2 + w * 0.055, 0.01)); m.rotation.x = tilt; G.add(m); keep.add(m);
+  };
+  const SW = 1.9, SH = 1.18, SY = 3.05, SZ = -3.14, CH = SW * 9 / 16;
   screen(SCR.timing.tex, SW, SH, -3.0, SY, SZ); screen(SCR.map.tex, SW, SH, -1.0, SY, SZ);
-  screen(SCR.cam[0].rt.texture, SW, SW * 9 / 16, 1.0, SY, SZ); camLabel(SCR.cam[0].label, SW, 1.0, SY - SW * 9 / 32 + SW * 0.055, SZ);
+  screen(SCR.cam[0].rt.texture, SW, CH, 1.0, SY, SZ); camLabel(SCR.cam[0].label, SW, CH, 1.0, SY, SZ);
   screen(SCR.weather.tex, SW, SH, 3.0, SY, SZ);
-  const PW = 1.36, PH = PW * 0.625, PZ = Z.wall - 0.24, T = 0.22;
-  screen(SCR.timing.tex, PW, PH, -2.8, STAND.screenY, PZ, T); screen(SCR.map.tex, PW, PH, -1.4, STAND.screenY, PZ, T);
-  screen(SCR.cam[0].rt.texture, PW, PW * 9 / 16, 0, STAND.screenY, PZ, T); camLabel(SCR.cam[0].label, PW, 0, STAND.screenY - PW * 9 / 32 + PW * 0.06, PZ, T);
-  screen(SCR.cam[1].rt.texture, PW, PW * 9 / 16, 1.4, STAND.screenY, PZ, T); camLabel(SCR.cam[1].label, PW, 1.4, STAND.screenY - PW * 9 / 32 + PW * 0.06, PZ, T);
-  screen(SCR.weather.tex, PW, PH, 2.8, STAND.screenY, PZ, T);
+  const PW = 1.36, PH = PW * 0.625, PC = PW * 9 / 16, PZ = Z.wall - 0.24, PY = STAND.screenY, T = 0.22;
+  box(G, 7.2, 0.94, 0.04, ...along(0, PY, PZ, T, 0, -0.09), M.dark).rotation.x = T; // backing panel, tilted with the screens
+  screen(SCR.timing.tex, PW, PH, -2.8, PY, PZ, T); screen(SCR.map.tex, PW, PH, -1.4, PY, PZ, T);
+  screen(SCR.cam[0].rt.texture, PW, PC, 0, PY, PZ, T); camLabel(SCR.cam[0].label, PW, PC, 0, PY, PZ, T);
+  screen(SCR.cam[1].rt.texture, PW, PC, 1.4, PY, PZ, T); camLabel(SCR.cam[1].label, PW, PC, 1.4, PY, PZ, T);
+  screen(SCR.weather.tex, PW, PH, 2.8, PY, PZ, T);
   const traffic = new THREE.Group(); G.add(traffic); keep.add(traffic);
   bake(G, keep);
   G.traverse(o => { if (o.material) [].concat(o.material).forEach(outsideWindow); });
