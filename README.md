@@ -7,10 +7,12 @@ One GitHub repo, one Cloudflare Worker. The Worker serves the app, runs the F1 l
 ```
 wrangler.toml
 src/worker.js
+src/weather.js
 public/index.html
 public/drive.js
 public/hang.js
 public/garage.js
+public/weather.js
 public/sw.js
 public/manifest.webmanifest
 public/icon-192.png
@@ -28,11 +30,21 @@ public/icon-512.png
 4. Open `https://kerbside.<your-subdomain>.workers.dev` on the Quest 3 or iPad. Leave "Relay address" blank; it uses the same site.
 5. Check the relay any time at `/status?key=<RELAY_KEY>`.
 
+## Circuit weather and alerts
+
+The menu's **Circuit weather** section shows the forecast for each session of the next Grand Prix (in your own time zone), with a matching sign at the table and a line on the headset panel. The Worker checks every 15 minutes, from 9 days before the weekend.
+
+- **Turn on alerts** on each device you want them on. Pick any of: rain expected during a session, a daily 8 am forecast on race weekends, rain at the circuit within the hour, strong wind (gusts 60 km/h+), heat (35 °C+) or storms, and any change in a session's forecast. More than three at once arrive as one summary.
+- iPad and iPhone: alerts only work from the Home Screen app (Share → Add to Home Screen, then open Kerbside from there).
+- Anyone with your relay key (your share link) can turn alerts on. Nothing to set up in Cloudflare: the Worker makes its own signing keys the first time.
+- Forecasts: Open-Meteo, for the town the circuit is named after (within about 10 km of the track). Schedule: OpenF1.
+- Check it any time at `/weather`; force a check with `/weather/run?key=<RELAY_KEY>`.
+
 ## Circuits saved on Cloudflare
 
 The Worker saves every circuit's outline ahead of time, so the track still loads when OpenF1 locks its free data (from about 30 minutes before a session until 30 minutes after).
 
-- Once an hour (the `[triggers]` schedule in `wrangler.toml`), it finds the most recent race at each circuit from the last three seasons and saves an outline from one lap. It saves a few circuits per run, so a fresh deploy has them all within about two hours. After that it only refreshes a circuit when a newer race has been run there, which keeps changed layouts up to date.
+- Once an hour (the first of the 15-minute runs in `wrangler.toml`'s `[triggers]`), it finds the most recent race at each circuit from the last three seasons and saves an outline from one lap. It saves a few circuits per run, so a fresh deploy has them all within about two hours. After that it only refreshes a circuit when a newer race has been run there, which keeps changed layouts up to date.
 - Don't want to wait after the first deploy? Open `/tracks/fill?key=<RELAY_KEY>` a couple of times; each visit saves more.
 - See what's saved at `/tracks` (no key needed). Circuits are numbered as OpenF1 numbers them.
 - Reading outlines needs no key, so Replay finds them for anyone. Saving one does. A device only fills a gap, or replaces an outline it found doesn't match the live cars.

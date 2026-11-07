@@ -32,9 +32,10 @@ new_sqlite_classes = ["RaceRoom"]
 tag = "v3"
 new_sqlite_classes = ["HangRoom"]
 
-# Hourly: save circuit outlines from OpenF1 ahead of time, so tracks load even when OpenF1 is locked.
+# Every 15 minutes: circuit weather and alerts. Once an hour (first run each hour): save circuit outlines
+# from OpenF1 ahead of time, so tracks load even when OpenF1 is locked.
 [triggers]
-crons = ["23 * * * *"]
+crons = ["*/15 * * * *"]
 
 [observability]
 enabled = true
