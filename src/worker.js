@@ -1,6 +1,7 @@
 // Kerbside relay: holds one connection to F1 live timing and fans it out to viewers.
 // Also keeps a shared store of circuit outlines, so every device can draw the track during a live session.
 import { DurableObject } from 'cloudflare:workers';
+import { weatherRequest, weatherRun } from './weather.js';
 
 const RS = '\x1e';
 const F1_BASE = 'https://livetiming.formula1.com/signalrcore';
@@ -17,7 +18,7 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     const keys = String(env.RELAY_KEY || '').split(',').map(k => k.trim()).filter(Boolean);
     // Circuit outlines aren't secret: anyone using the app can read them, so Replay works without a key.
-    const open = request.method === 'GET' && (url.pathname === '/track' || url.pathname === '/tracks');
+    const open = request.method === 'GET' && ['/track', '/tracks', '/weather', '/push/key'].includes(url.pathname);
     if (!open && keys.length && !keys.includes(url.searchParams.get('key'))) {
       return new Response('Wrong or missing relay key', { status: 401, headers: CORS });
     }
@@ -43,6 +44,12 @@ export default {
       }
       return stub.fetch(request);
     }
+    if (url.pathname === '/weather' || url.pathname.startsWith('/push/') || url.pathname === '/weather/run') {
+      const r = await stub.fetch(new Request(url.origin + (url.pathname === '/weather/run' ? '/wx/run' : url.pathname), {
+        method: request.method, body: request.method === 'POST' ? await request.text() : undefined, headers: { 'content-type': 'application/json' }
+      }));
+      return new Response(r.body, { status: r.status, headers: { ...CORS, 'content-type': 'application/json', 'cache-control': 'no-store' } });
+    }
     if (url.pathname === '/tracks' || url.pathname === '/tracks/fill') {
       const r = await stub.fetch(new Request(url.origin + (url.pathname === '/tracks' ? '/tracks' : '/fill')));
       return new Response(r.body, { status: r.status, headers: { ...CORS, 'content-type': 'application/json', 'cache-control': 'no-store' } });
@@ -55,10 +62,12 @@ export default {
     }
     return new Response('Kerbside relay is running.', { headers: CORS });
   },
-  // Hourly (see [triggers] in wrangler.toml): save any circuit outlines still missing, a few at a time.
+  // Every 15 minutes (see [triggers] in wrangler.toml): check the circuit weather and send alerts;
+  // once an hour, also save any circuit outlines still missing.
   async scheduled(event, env, ctx) {
     const stub = env.RELAY.get(env.RELAY.idFromName('live'));
-    ctx.waitUntil(stub.fetch('https://relay/fill').then(r => r.text()).catch(() => {}));
+    ctx.waitUntil(stub.fetch('https://relay/wx/run').then(r => r.text()).catch(() => {}));
+    if (new Date(event.scheduledTime || Date.now()).getUTCMinutes() < 15) ctx.waitUntil(stub.fetch('https://relay/fill').then(r => r.text()).catch(() => {}));
   }
 };
 
@@ -306,6 +315,12 @@ export class F1Relay extends DurableObject {
     if (url.pathname === '/status') return Response.json(this.statusObj());
     if (url.pathname === '/track') return this.trackRequest(request, url);
     if (url.pathname === '/tracks') return Response.json(await this.listTracks());
+    if (url.pathname === '/wx/run') {
+      try { return Response.json(await weatherRun(this.ctx.storage)); } catch (e) { return Response.json({ error: String(e.message || e) }, { status: 500 }); }
+    }
+    if (url.pathname === '/weather' || url.pathname.startsWith('/push/')) {
+      const r = await weatherRequest(this.ctx.storage, request, url); if (r) return r;
+    }
     if (url.pathname === '/fill') {
       try { return Response.json(await this.fillTracks()); } catch (e) { return Response.json({ error: String(e.message || e) }, { status: 500 }); }
     }
