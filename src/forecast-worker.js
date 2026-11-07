@@ -80,6 +80,28 @@ const CAT_TEXT = { dry: 'dry', showers: 'showers possible', wet: 'rain likely', 
 
 // F1's own season index lists every weekend of the year with session times, including ones not raced yet.
 // "StartDate" there is local time at the circuit; GmtOffset turns it into UTC.
+// Jolpica (the Ergast successor): free, no key, whole season with every session time in UTC and the
+// circuit's coordinates. One request per season, so it's the main schedule source.
+const JOLPICA_SESSIONS = [['FirstPractice', 'Practice 1', 60], ['SecondPractice', 'Practice 2', 60], ['ThirdPractice', 'Practice 3', 60],
+  ['SprintQualifying', 'Sprint Qualifying', 45], ['SprintShootout', 'Sprint Qualifying', 45], ['Sprint', 'Sprint', 60], ['Qualifying', 'Qualifying', 60]];
+async function jolpicaSchedule(year) {
+  const r = await fetch(`https://api.jolpi.ca/ergast/f1/${year}/races/?limit=100`, { headers: { 'User-Agent': 'kerbside-relay' } });
+  if (!r.ok) throw new Error('Jolpica ' + year + ' HTTP ' + r.status);
+  const j = await r.json(), out = [];
+  for (const race of (j.MRData && j.MRData.RaceTable && j.MRData.RaceTable.Races) || []) {
+    const c = race.Circuit || {}, L = c.Location || {}, mk = 'j' + race.season + '-' + race.round;
+    const base = { mk, location: L.locality, country: L.country, circuit: c.circuitName, ck: c.circuitId,
+      lat: L.lat != null ? +L.lat : undefined, lon: L.long != null ? +L.long : undefined };
+    const add = (key, name, mins, d) => {
+      if (!d || !d.date || !d.time) return; // a time not announced yet can't be forecast
+      const start = isoMs(d.date + 'T' + d.time);
+      if (isFinite(start)) out.push({ ...base, sk: mk + '-' + key, name, start, end: start + mins * 60e3 });
+    };
+    for (const [key, name, mins] of JOLPICA_SESSIONS) add(key, name, mins, race[key]);
+    add('Race', 'Race', 120, { date: race.date, time: race.time });
+  }
+  return out;
+}
 async function f1Schedule(year) {
   const r = await fetch(`https://livetiming.formula1.com/static/${year}/Index.json`, { headers: { 'User-Agent': 'BestHTTP' } });
   if (!r.ok) throw new Error('F1 season index HTTP ' + r.status);
@@ -93,18 +115,29 @@ async function f1Schedule(year) {
   }
   return out;
 }
+async function openf1Schedule(y) {
+  const s = await getJSON(`${OPENF1}/sessions?year=${y}`);
+  return (Array.isArray(s) ? s : []).map(s => ({ sk: s.session_key, mk: s.meeting_key, name: s.session_name,
+    start: isoMs(s.date_start), end: isoMs(s.date_end), location: s.location, country: s.country_name, circuit: s.circuit_short_name, ck: s.circuit_key }));
+}
 async function nextMeeting(storage, now) {
   let cache = await storage.get('wx:schedule');
   const hasFuture = c => c && c.list.some(s => s.end > now);
   if (!cache || now - cache.at > 6 * 3600e3 || !hasFuture(cache)) {
-    const year = new Date(now).getUTCFullYear(), list = [], errors = [];
-    for (const y of [year, year + 1]) { // OpenF1 first; a year it doesn't have yet is simply empty
-      try { const s = await getJSON(`${OPENF1}/sessions?year=${y}`); if (Array.isArray(s)) list.push(...s.map(s => ({ sk: s.session_key, mk: s.meeting_key, name: s.session_name,
-        start: isoMs(s.date_start), end: isoMs(s.date_end), location: s.location, country: s.country_name, circuit: s.circuit_short_name, ck: s.circuit_key }))); }
-      catch (e) { errors.push('OpenF1 ' + y + ': ' + e.message); }
-    }
-    if (!list.some(s => s.end > now)) { // OpenF1 may only list a weekend once it starts: use F1's season index
-      for (const y of [year, year + 1]) { try { list.push(...await f1Schedule(y)); } catch (e) { errors.push(e.message); } }
+    const year = new Date(now).getUTCFullYear(), errors = [];
+    const future = l => l.some(s => s.end > now);
+    let list = [];
+    // Try each source in turn and stop at the first one with an upcoming session, so a run costs
+    // one or two requests. OpenF1 (30 requests a minute on the free tier) is only a fallback.
+    const sources = [['Jolpica', jolpicaSchedule], ['OpenF1', openf1Schedule], ['F1 index', f1Schedule]];
+    for (const [name, fn] of sources) {
+      const got = [];
+      for (const y of [year, year + 1]) {
+        try { got.push(...await fn(y)); } catch (e) { errors.push(e.message.startsWith(name) ? e.message : name + ' ' + y + ': ' + e.message); }
+        if (future(got)) break; // next season only needed after the last race of this one
+      }
+      if (future(got)) { list = got; break; }
+      if (!list.length) list = got;
     }
     if (list.length) { cache = { at: now, list }; await storage.put('wx:schedule', cache); }
     else if (!cache) throw new Error('Couldn’t get the race schedule (' + errors.join('; ') + ')');
@@ -112,11 +145,16 @@ async function nextMeeting(storage, now) {
   const upcoming = cache.list.filter(s => s.end > now).sort((a, b) => a.start - b.start);
   if (!upcoming.length) return null;
   const mk = upcoming[0].mk, sessions = cache.list.filter(s => s.mk === mk).sort((a, b) => a.start - b.start);
-  return { mk, location: sessions[0].location, country: sessions[0].country, circuit: sessions[0].circuit, ck: sessions[0].ck, sessions };
+  const f = sessions[0];
+  return { mk, location: f.location, country: f.country, circuit: f.circuit, ck: f.ck, lat: f.lat, lon: f.lon, sessions };
 }
 async function locate(storage, m) {
   const key = 'wx:loc:' + m.mk, saved = await storage.get(key);
   if (saved) return saved;
+  if (isFinite(m.lat) && isFinite(m.lon)) { // the schedule already gave the circuit's coordinates
+    const loc = { lat: m.lat, lon: m.lon, place: [m.location, m.country].filter(Boolean).join(', ') };
+    await storage.put(key, loc); return loc;
+  }
   const r = await getJSON(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(m.location)}&count=10&language=en&format=json`);
   const res = (r && r.results) || [];
   const country = String(m.country || '').toLowerCase();

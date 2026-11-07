@@ -238,9 +238,9 @@ export class F1Relay extends DurableObject {
   // unless one is already saved from that race or newer. Limited per run to stay inside Cloudflare's
   // per-request limits; the hourly schedule finishes the rest.
   async fillTracks() {
-    const st = this.ctx.storage, now = Date.now(), year = new Date().getUTCFullYear(), BUDGET = 40;
+    const st = this.ctx.storage, now = Date.now(), year = new Date().getUTCFullYear(), BUDGET = 20; // OpenF1's free tier allows 30 requests a minute
     let calls = 0;
-    const get = async p => { if (calls >= BUDGET) throw new Error('budget'); calls++; await sleep(350); return of1(p); };
+    const get = async p => { if (calls >= BUDGET) throw new Error('budget'); calls++; await sleep(2500); return of1(p); }; // ~24 a minute, leaving room for everything else
     let races = await st.get('races');
     try {
       if (!races || now - races.at > 12 * 3600e3) {
@@ -270,7 +270,7 @@ export class F1Relay extends DurableObject {
           done.push(race.name);
         } else { await st.put('trackfail:' + ck, { sk: race.sk, at: now }); failed.push(race.name); }
       } catch (e) {
-        if (e.message === 'budget') break;
+        if (e.message === 'budget' || /HTTP 429/.test(e.message)) break; // rate limited: stop and let the next hourly run carry on
         await st.put('trackfail:' + ck, { sk: race.sk, at: now }); failed.push(race.name + ' (' + e.message + ')');
       }
     }
