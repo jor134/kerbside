@@ -271,7 +271,7 @@ export async function weatherRun(storage, now = Date.now()) {
   const prev = await storage.get('wx:state');
   const { alerts, state } = evaluate(prev, meeting, sums, fc, now);
   await storage.put('wx:state', state);
-  const cur = fc.current ? { temp: Math.round(fc.current.temperature_2m), text: wxText(fc.current.weather_code), precip: fc.current.precipitation, wind: Math.round(fc.current.wind_speed_10m), gust: Math.round(fc.current.wind_gusts_10m) } : null;
+  const cur = fc.current ? { temp: Math.round(fc.current.temperature_2m), code: fc.current.weather_code, text: wxText(fc.current.weather_code), precip: fc.current.precipitation, wind: Math.round(fc.current.wind_speed_10m), gust: Math.round(fc.current.wind_gusts_10m) } : null;
   await storage.put('wx:last', { ...base, place: loc.place, lat: loc.lat, lon: loc.lon, now: cur,
     sessions: meeting.sessions.map(s => ({ sk: s.sk, name: s.name, start: s.start, end: s.end, w: sums[s.sk] })) });
   // deliver

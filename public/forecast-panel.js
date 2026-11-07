@@ -4,7 +4,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast, renderer = KB.renderer;
-const WEATHER_BUILD = 2;
+const WEATHER_BUILD = 3;
 const TYPES = [
   ['rainSession', 'Rain expected during a session'],
   ['daily', 'Daily forecast on race weekends (8 am)'],
@@ -32,7 +32,9 @@ async function refresh() {
 }
 
 /* ---------------- Words and icons ---------------- */
-const icon = w => !w ? '·' : w.cat === 'storm' ? '⛈' : w.cat === 'wet' ? '🌧' : w.cat === 'showers' ? '🌦' : w.code >= 3 ? '☁' : w.code >= 1 ? '⛅' : '☀';
+// Same emoji as the push notifications (one per WMO weather code).
+const wxEmoji = c => c >= 95 ? '⛈️' : c >= 85 ? '🌨️' : c >= 80 ? '🌦️' : c >= 71 ? '❄️' : c >= 61 ? '🌧️' : c >= 51 ? '🌦️' : c >= 45 ? '🌫️' : c === 3 ? '☁️' : c === 2 ? '⛅' : c === 1 ? '🌤️' : '☀️';
+const icon = w => !w ? '·' : wxEmoji(w.code || 0);
 const tf = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 const when = t => tf.format(new Date(t));
 const nextSession = d => (d && d.sessions || []).find(s => s.end > Date.now());
@@ -42,7 +44,7 @@ function headline(d) {
   const s = nextSession(d);
   if (!s) return d.meeting.location;
   if (!s.w) return `${d.meeting.location}: ${s.name} ${when(s.start)} (forecast from 9 days out)`;
-  return `${d.meeting.location} · ${s.name}: ${s.w.text}, ${s.w.temp}°C, rain ${s.w.prob}%`;
+  return `${icon(s.w)} ${d.meeting.location} · ${s.name}: ${s.w.text}, ${s.w.temp}°C, 💧${s.w.prob}%`;
 }
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
@@ -55,10 +57,10 @@ function render() {
   else if (!d || !d.meeting) h += `<p class="hint">${!d ? 'Loading the forecast…' : d.error ? 'Forecast unavailable: ' + esc(d.error) + '. It retries every 15 minutes.' : 'No upcoming Grand Prix found yet.'}</p>`;
   else {
     h += `<p class="hint" style="margin-top:0">${esc(d.meeting.location)}${d.place ? ' · forecast for ' + esc(d.place) : ''}</p>`;
-    if (d.now) h += `<p class="wxnow">Now: ${esc(d.now.text)}, ${d.now.temp}°C, wind ${d.now.wind} km/h</p>`;
+    if (d.now) h += `<p class="wxnow">${d.now.code != null ? wxEmoji(d.now.code) + ' ' : ''}Now: ${esc(d.now.text)}, ${d.now.temp}°C, wind ${d.now.wind} km/h</p>`;
     h += '<ul class="wxlist">' + d.sessions.filter(s => s.end > Date.now() - 3600e3).map(s => {
       const w = s.w;
-      return `<li><span class="wi">${icon(w)}</span><span><b>${esc(s.name)}</b><br><small>${when(s.start)}</small></span><span class="wv">${w ? `${w.temp}°C · ${w.prob}%<br><small>${esc(w.text)}${w.gust >= 40 ? ', gusts ' + w.gust : ''}</small>` : '<small>forecast soon</small>'}</span></li>`;
+      return `<li><span class="wi">${icon(w)}</span><span><b>${esc(s.name)}</b><br><small>${when(s.start)}</small></span><span class="wv">${w ? `${w.temp}°C · 💧${w.prob}%<br><small>${esc(w.text)}${w.gust >= 40 ? ', gusts ' + w.gust : ''}</small>` : '<small>forecast soon</small>'}</span></li>`;
     }).join('') + '</ul>';
     if (d.at) h += `<p class="hint">Updated ${new Date(d.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Times are yours. Rain % is the highest chance during each session.</p>`;
   }
@@ -132,7 +134,7 @@ function drawSign() {
   KB.rr(c, 0, 0, SW, SH, 26); c.fillStyle = 'rgba(32,38,43,0.93)'; c.fill();
   c.fillStyle = '#4F9FD9'; c.fillRect(0, 0, SW, 10);
   c.fillStyle = '#E9E6DF'; c.font = '700 40px "Barlow Condensed", sans-serif'; c.textBaseline = 'alphabetic';
-  c.fillText(d && d.meeting ? d.meeting.location : 'Circuit weather', 24, 58);
+  c.fillText(d && d.meeting ? (d.now && d.now.code != null ? wxEmoji(d.now.code) + ' ' : '') + d.meeting.location : 'Circuit weather', 24, 58);
   const list = d && d.sessions ? d.sessions.filter(s => s.end > Date.now()).slice(0, 4) : [];
   if (!list.length) { c.font = '500 26px Barlow'; c.fillStyle = '#94A1A8'; c.fillText(d ? 'No forecast yet' : 'Loading…', 24, 120); }
   list.forEach((s, i) => {
@@ -142,7 +144,7 @@ function drawSign() {
     c.font = '500 22px Barlow'; c.fillStyle = '#94A1A8'; c.fillText(when(s.start), 70, y + 28);
     c.textAlign = 'right'; c.font = '600 28px "Barlow Condensed"';
     c.fillStyle = w && (w.cat === 'wet' || w.cat === 'storm') ? '#4F9FD9' : '#E9E6DF';
-    c.fillText(w ? `${w.temp}°  ${w.prob}%` : '–', SW - 24, y + 12); c.textAlign = 'left'; c.fillStyle = '#E9E6DF';
+    c.fillText(w ? `${w.temp}°  💧${w.prob}%` : '–', SW - 24, y + 12); c.textAlign = 'left'; c.fillStyle = '#E9E6DF';
   });
   tex.needsUpdate = true;
 }
