@@ -1,177 +1,291 @@
-// Kerbside circuit weather: the next Grand Prix forecast in the menu, on a sign at the table and on the
-// headset panel, plus push alerts (rain for a session, daily forecast, rain within the hour, severe weather,
-// any change). Forecasts and alerts come from the Worker every 15 minutes; this file only shows them.
-(function () {
-'use strict';
-const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast, renderer = KB.renderer;
-const WEATHER_BUILD = 2;
-const TYPES = [
-  ['rainSession', 'Rain expected during a session'],
-  ['daily', 'Daily forecast on race weekends (8 am)'],
-  ['rainSoon', 'Rain starting at the circuit within the hour'],
-  ['severe', 'Strong wind, heat or storms'],
-  ['change', 'Any change in a session’s forecast']
-];
-const prefs = Object.assign({ rainSession: true, daily: true, rainSoon: true, severe: true, change: true }, store.get('wx:prefs', {}));
-const W = { data: null, at: 0, sign: true };
-W.sign = store.get('wx:sign', true);
+// Kerbside circuit weather: forecasts for the next Grand Prix and push alerts to anyone who turns them on.
+// Runs inside the relay Durable Object every 15 minutes (see [triggers] in wrangler.toml).
+// Weather: Open-Meteo (free, no key). Schedule: OpenF1. Alerts: standard Web Push, signed with keys
+// the Worker makes for itself on first use (VAPID), so there's nothing to set up in Cloudflare.
 
-/* ---------------- Fetching ---------------- */
-function base() { return (store.get('relayUrl', '') || location.origin).replace(/\/+$/, ''); }
-async function refresh() {
-  let why = '';
-  try {
-    const r = await fetch(base() + '/weather', { cache: 'no-store' });
-    const type = r.headers.get('content-type') || '';
-    if (!r.ok) why = r.status === 401 ? 'the relay asked for a key, so the Worker is an older version' : 'HTTP ' + r.status;
-    else if (!/json/.test(type)) why = 'the Worker doesn’t know /weather yet, so it’s an older version';
-    else { W.data = await r.json(); W.err = ''; W.at = Date.now(); render(); drawSign(); return; }
-  } catch (e) { why = 'no connection to ' + base(); }
-  W.err = 'Couldn’t load the forecast: ' + why + '. Check that src/weather.js is committed and the latest Cloudflare deploy succeeded.';
-  render();
+const OPENF1 = 'https://api.openf1.org/v1';
+const enc = new TextEncoder();
+const isoMs = s => { if (!s) return NaN; s = String(s).replace(/(\.\d{3})\d+/, '$1'); if (!/(Z|[+-]\d\d:?\d\d)$/i.test(s)) s += 'Z'; return Date.parse(s); };
+async function getJSON(url) {
+  const r = await fetch(url, { headers: { 'User-Agent': 'kerbside-relay' } });
+  if (!r.ok) throw new Error('HTTP ' + r.status + ' from ' + new URL(url).host);
+  return r.json();
 }
 
-/* ---------------- Words and icons ---------------- */
-const icon = w => !w ? '·' : w.cat === 'storm' ? '⛈' : w.cat === 'wet' ? '🌧' : w.cat === 'showers' ? '🌦' : w.code >= 3 ? '☁' : w.code >= 1 ? '⛅' : '☀';
-const tf = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-const when = t => tf.format(new Date(t));
-const nextSession = d => (d && d.sessions || []).find(s => s.end > Date.now());
-function headline(d) {
-  if (!d) return W.err ? 'Weather: couldn’t load the forecast' : 'Weather: loading…';
-  if (!d.meeting) return d.error ? 'Weather unavailable: ' + d.error : 'No upcoming Grand Prix found yet.';
-  const s = nextSession(d);
-  if (!s) return d.meeting.location;
-  if (!s.w) return `${d.meeting.location}: ${s.name} ${when(s.start)} (forecast from 9 days out)`;
-  return `${d.meeting.location} · ${s.name}: ${s.w.text}, ${s.w.temp}°C, rain ${s.w.prob}%`;
+/* ======================= Web Push (RFC 8291 + VAPID) ======================= */
+const b64u = {
+  enc(buf) { let s = ''; const b = new Uint8Array(buf); for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); },
+  dec(str) { str = String(str).replace(/-/g, '+').replace(/_/g, '/'); while (str.length % 4) str += '='; const s = atob(str), b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; }
+};
+const cat = (...arrs) => { const n = arrs.reduce((a, b) => a + b.length, 0), out = new Uint8Array(n); let o = 0; for (const a of arrs) { out.set(a, o); o += a.length; } return out; };
+async function hmac(key, data) {
+  const k = await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return new Uint8Array(await crypto.subtle.sign('HMAC', k, data));
 }
-const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-
-/* ---------------- Menu section ---------------- */
-function render() {
-  const el = $('#wxPane'); if (!el) return;
-  const d = W.data;
-  let h = '<h3>Circuit weather</h3>';
-  if (W.err && !d) h += `<p class="hint" style="color:var(--flag)">${esc(W.err)}</p>`;
-  else if (!d || !d.meeting) h += `<p class="hint">${!d ? 'Loading the forecast…' : d.error ? 'Forecast unavailable: ' + esc(d.error) + '. It retries every 15 minutes.' : 'No upcoming Grand Prix found yet.'}</p>`;
-  else {
-    h += `<p class="hint" style="margin-top:0">${esc(d.meeting.location)}${d.place ? ' · forecast for ' + esc(d.place) : ''}</p>`;
-    if (d.now) h += `<p class="wxnow">Now: ${esc(d.now.text)}, ${d.now.temp}°C, wind ${d.now.wind} km/h</p>`;
-    h += '<ul class="wxlist">' + d.sessions.filter(s => s.end > Date.now() - 3600e3).map(s => {
-      const w = s.w;
-      return `<li><span class="wi">${icon(w)}</span><span><b>${esc(s.name)}</b><br><small>${when(s.start)}</small></span><span class="wv">${w ? `${w.temp}°C · ${w.prob}%<br><small>${esc(w.text)}${w.gust >= 40 ? ', gusts ' + w.gust : ''}</small>` : '<small>forecast soon</small>'}</span></li>`;
-    }).join('') + '</ul>';
-    if (d.at) h += `<p class="hint">Updated ${new Date(d.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Times are yours. Rain % is the highest chance during each session.</p>`;
+export async function vapidKeys(storage) {
+  let v = await storage.get('vapid');
+  if (!v) {
+    const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+    v = { pub: b64u.enc(await crypto.subtle.exportKey('raw', kp.publicKey)), jwk: await crypto.subtle.exportKey('jwk', kp.privateKey) };
+    await storage.put('vapid', v);
   }
-  h += `<label class="check" style="margin-top:8px"><input type="checkbox" id="wxSign" ${W.sign ? 'checked' : ''}> Weather sign at the table</label>`;
-  const on = store.get('wx:on', false);
-  h += `<h3 style="margin-top:12px">Weather alerts</h3>`;
-  h += TYPES.map(([k, l]) => `<label class="check"><input type="checkbox" data-wxp="${k}" ${prefs[k] ? 'checked' : ''}> ${l}</label>`).join('');
-  h += `<button id="wxAlerts" class="${on ? 'ghost' : 'primary'}" style="margin-top:8px">${on ? 'Turn alerts off' : 'Turn on alerts'}</button>`;
-  h += `<p class="hint" id="wxHint">${hint()}</p><p class="hint">Weather build ${WEATHER_BUILD}</p>`;
-  el.innerHTML = h;
-  $('#wxSign').onchange = e => { W.sign = e.target.checked; store.set('wx:sign', W.sign); };
-  el.querySelectorAll('[data-wxp]').forEach(c => c.onchange = () => { prefs[c.dataset.wxp] = c.checked; store.set('wx:prefs', prefs); if (store.get('wx:on', false)) subscribe(false); });
-  $('#wxAlerts').onclick = () => store.get('wx:on', false) ? unsubscribe() : subscribe(true);
+  return v;
 }
-const isApple = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-function hint() {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    if (isApple() && !standalone()) return 'On iPad and iPhone, alerts need the Home Screen app: tap Share, then Add to Home Screen, and open Kerbside from there.';
-    return 'This browser can’t receive alerts. The forecast still shows here, on the table and in the headset.';
+async function vapidAuth(v, endpoint, subject) {
+  const aud = new URL(endpoint).origin;
+  const head = b64u.enc(enc.encode(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
+  const body = b64u.enc(enc.encode(JSON.stringify({ aud, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: subject })));
+  const key = await crypto.subtle.importKey('jwk', v.jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, enc.encode(head + '.' + body));
+  return `vapid t=${head}.${body}.${b64u.enc(sig)}, k=${v.pub}`;
+}
+// Encrypts one push message for one subscription (aes128gcm, a single record).
+export async function encryptPush(sub, payload) {
+  const uaPub = b64u.dec(sub.keys.p256dh), auth = b64u.dec(sub.keys.auth);
+  const as = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const asPub = new Uint8Array(await crypto.subtle.exportKey('raw', as.publicKey));
+  const uaKey = await crypto.subtle.importKey('raw', uaPub, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+  const shared = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: uaKey }, as.privateKey, 256));
+  const prkKey = await hmac(auth, shared);
+  const ikm = (await hmac(prkKey, cat(enc.encode('WebPush: info\0'), uaPub, asPub, new Uint8Array([1])))).slice(0, 32);
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const prk = await hmac(salt, ikm);
+  const cek = (await hmac(prk, cat(enc.encode('Content-Encoding: aes128gcm\0'), new Uint8Array([1])))).slice(0, 16);
+  const nonce = (await hmac(prk, cat(enc.encode('Content-Encoding: nonce\0'), new Uint8Array([1])))).slice(0, 12);
+  const key = await crypto.subtle.importKey('raw', cek, { name: 'AES-GCM' }, false, ['encrypt']);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, key, cat(enc.encode(payload), new Uint8Array([2]))));
+  const header = new Uint8Array(21 + asPub.length);
+  header.set(salt, 0); new DataView(header.buffer).setUint32(16, 4096); header[20] = asPub.length; header.set(asPub, 21);
+  return cat(header, ct);
+}
+// Sends one message. Returns 'ok', 'gone' (subscription expired: delete it) or an error text.
+async function sendPush(v, sub, msg, subject) {
+  try {
+    const body = await encryptPush(sub, JSON.stringify(msg));
+    const r = await fetch(sub.endpoint, { method: 'POST', body, headers: {
+      Authorization: await vapidAuth(v, sub.endpoint, subject), 'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream',
+      TTL: String(msg.ttl || 3600), Urgency: msg.urgent ? 'high' : 'normal', ...(msg.tag ? { Topic: msg.tag.replace(/[^\w-]/g, '').slice(0, 32) } : {}) } });
+    if (r.status === 404 || r.status === 410) return 'gone';
+    return r.ok ? 'ok' : 'HTTP ' + r.status;
+  } catch (e) { return String(e.message || e); }
+}
+
+/* ======================= Schedule and forecast ======================= */
+const WX = { 0: 'Clear', 1: 'Mostly clear', 2: 'Partly cloudy', 3: 'Overcast', 45: 'Fog', 48: 'Fog', 51: 'Light drizzle', 53: 'Drizzle', 55: 'Heavy drizzle',
+  56: 'Freezing drizzle', 57: 'Freezing drizzle', 61: 'Light rain', 63: 'Rain', 65: 'Heavy rain', 66: 'Freezing rain', 67: 'Freezing rain',
+  71: 'Light snow', 73: 'Snow', 75: 'Heavy snow', 77: 'Snow grains', 80: 'Light showers', 81: 'Showers', 82: 'Heavy showers',
+  85: 'Snow showers', 86: 'Snow showers', 95: 'Thunderstorms', 96: 'Thunderstorms with hail', 99: 'Thunderstorms with hail' };
+export const wxText = c => WX[c] || 'Unknown';
+const CAT_TEXT = { dry: 'dry', showers: 'showers possible', wet: 'rain likely', storm: 'thunderstorms likely' };
+
+// F1's own season index lists every weekend of the year with session times, including ones not raced yet.
+// "StartDate" there is local time at the circuit; GmtOffset turns it into UTC.
+async function f1Schedule(year) {
+  const r = await fetch(`https://livetiming.formula1.com/static/${year}/Index.json`, { headers: { 'User-Agent': 'BestHTTP' } });
+  if (!r.ok) throw new Error('F1 season index HTTP ' + r.status);
+  const j = JSON.parse((await r.text()).replace(/^\uFEFF/, ''));
+  const off = o => { const m = String(o || '00:00:00').match(/^(-)?(\d+):(\d+)/); return m ? (m[1] ? -1 : 1) * (+m[2] * 60 + +m[3]) * 60e3 : 0; };
+  const out = [];
+  for (const m of j.Meetings || []) for (const s of m.Sessions || []) {
+    const o = off(s.GmtOffset);
+    out.push({ sk: 'f1-' + s.Key, mk: 'f1-' + m.Key, name: s.Name, start: isoMs(s.StartDate) - o, end: isoMs(s.EndDate) - o,
+      location: m.Location, country: m.Country && m.Country.Name, circuit: m.Circuit && m.Circuit.ShortName, ck: m.Circuit && m.Circuit.Key });
   }
-  if (typeof Notification !== 'undefined' && Notification.permission === 'denied') return 'Notifications are blocked for this site. Allow them in the browser or system settings, then try again.';
-  if (!store.get('relayKey', '')) return 'Alerts use your relay. Enter the relay key under Live (or open a share link) first.';
-  return store.get('wx:on', false) ? 'Alerts are on for this device. Checked every 15 minutes.' : 'Alerts arrive even when Kerbside is closed. Each device turns them on separately.';
+  return out;
 }
-
-/* ---------------- Push subscription ---------------- */
-const b64ToBytes = s => { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return Uint8Array.from(atob(s), c => c.charCodeAt(0)); };
-async function subscribe(withTest) {
-  const key = store.get('relayKey', '');
-  if (!key) { toast('Enter the relay key under Live first.', 5000); return; }
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) { toast(hint(), 8000); return; }
-  try {
-    const perm = await Notification.requestPermission();
-    if (perm !== 'granted') { toast('Notifications weren’t allowed, so alerts are off.', 6000); render(); return; }
-    const reg = await navigator.serviceWorker.ready;
-    let sub = await reg.pushManager.getSubscription();
-    if (!sub) {
-      const k = await (await fetch(base() + '/push/key', { cache: 'no-store' })).json();
-      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(k.key) });
+async function nextMeeting(storage, now) {
+  let cache = await storage.get('wx:schedule');
+  const hasFuture = c => c && c.list.some(s => s.end > now);
+  if (!cache || now - cache.at > 6 * 3600e3 || !hasFuture(cache)) {
+    const year = new Date(now).getUTCFullYear(), list = [], errors = [];
+    for (const y of [year, year + 1]) { // OpenF1 first; a year it doesn't have yet is simply empty
+      try { const s = await getJSON(`${OPENF1}/sessions?year=${y}`); if (Array.isArray(s)) list.push(...s.map(s => ({ sk: s.session_key, mk: s.meeting_key, name: s.session_name,
+        start: isoMs(s.date_start), end: isoMs(s.date_end), location: s.location, country: s.country_name, circuit: s.circuit_short_name, ck: s.circuit_key }))); }
+      catch (e) { errors.push('OpenF1 ' + y + ': ' + e.message); }
     }
-    const res = await fetch(`${base()}/push/subscribe?key=${encodeURIComponent(key)}`, { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sub: sub.toJSON(), prefs, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, origin: location.origin, test: withTest }) });
-    if (!res.ok) throw new Error(res.status === 401 ? 'the relay key was refused' : 'HTTP ' + res.status);
-    const j = await res.json();
-    store.set('wx:on', true);
-    if (withTest) toast(j.test === 'ok' ? 'Alerts are on. A test alert is on its way.' : 'Alerts are on, but the test alert failed (' + j.test + ').', 7000);
-  } catch (e) { toast('Couldn’t turn on alerts: ' + e.message + '.', 8000); }
-  render();
-}
-async function unsubscribe() {
-  try {
-    const reg = await navigator.serviceWorker.ready, sub = await reg.pushManager.getSubscription();
-    if (sub) {
-      await fetch(`${base()}/push/unsubscribe?key=${encodeURIComponent(store.get('relayKey', ''))}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ endpoint: sub.endpoint }) }).catch(() => {});
-      await sub.unsubscribe();
+    if (!list.some(s => s.end > now)) { // OpenF1 may only list a weekend once it starts: use F1's season index
+      for (const y of [year, year + 1]) { try { list.push(...await f1Schedule(y)); } catch (e) { errors.push(e.message); } }
     }
-  } catch (e) {}
-  store.set('wx:on', false); toast('Weather alerts are off for this device.'); render();
+    if (list.length) { cache = { at: now, list }; await storage.put('wx:schedule', cache); }
+    else if (!cache) throw new Error('Couldn’t get the race schedule (' + errors.join('; ') + ')');
+  }
+  const upcoming = cache.list.filter(s => s.end > now).sort((a, b) => a.start - b.start);
+  if (!upcoming.length) return null;
+  const mk = upcoming[0].mk, sessions = cache.list.filter(s => s.mk === mk).sort((a, b) => a.start - b.start);
+  return { mk, location: sessions[0].location, country: sessions[0].country, circuit: sessions[0].circuit, ck: sessions[0].ck, sessions };
+}
+async function locate(storage, m) {
+  const key = 'wx:loc:' + m.mk, saved = await storage.get(key);
+  if (saved) return saved;
+  const r = await getJSON(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(m.location)}&count=10&language=en&format=json`);
+  const res = (r && r.results) || [];
+  const country = String(m.country || '').toLowerCase();
+  const pick = res.find(x => String(x.country || '').toLowerCase() === country) || res.find(x => country.includes(String(x.country || '~').toLowerCase())) || res[0];
+  if (!pick) throw new Error('Could not find ' + m.location + ' on the map');
+  const loc = { lat: pick.latitude, lon: pick.longitude, place: [pick.name, pick.country].filter(Boolean).join(', '), tz: pick.timezone };
+  await storage.put(key, loc);
+  return loc;
+}
+async function forecast(loc) {
+  const q = `latitude=${loc.lat}&longitude=${loc.lon}&timezone=GMT&forecast_days=10&wind_speed_unit=kmh` +
+    '&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_gusts_10m' +
+    '&minutely_15=precipitation&current=temperature_2m,precipitation,weather_code,wind_speed_10m,wind_gusts_10m';
+  const f = await getJSON('https://api.open-meteo.com/v1/forecast?' + q);
+  const h = f.hourly || {}, times = (h.time || []).map(t => isoMs(t));
+  const m15 = f.minutely_15 || {};
+  return { times, h, m15: { times: (m15.time || []).map(t => isoMs(t)), p: m15.precipitation || [] }, current: f.current || null };
+}
+// Sums up the forecast for one session window (from 30 minutes before the start).
+export function summarize(fc, start, end) {
+  const { times, h } = fc; let prob = 0, precip = 0, temp = -99, tmin = 99, gust = 0, wind = 0, code = 0, n = 0, storm = false;
+  for (let i = 0; i < times.length; i++) {
+    if (times[i] + 3600e3 <= start - 1800e3 || times[i] >= end) continue;
+    n++;
+    prob = Math.max(prob, h.precipitation_probability ? h.precipitation_probability[i] || 0 : 0);
+    precip += h.precipitation ? h.precipitation[i] || 0 : 0;
+    temp = Math.max(temp, h.temperature_2m[i]); tmin = Math.min(tmin, h.temperature_2m[i]);
+    gust = Math.max(gust, h.wind_gusts_10m ? h.wind_gusts_10m[i] || 0 : 0); wind = Math.max(wind, h.wind_speed_10m[i] || 0);
+    const c = h.weather_code[i] || 0; if (c >= 95) storm = true;
+    if (rank(c) > rank(code)) code = c;
+  }
+  if (!n) return null;
+  const category = storm ? 'storm' : prob >= 60 && precip >= 0.5 ? 'wet' : prob >= 30 || precip >= 0.3 ? 'showers' : 'dry';
+  return { prob: Math.round(prob), precip: Math.round(precip * 10) / 10, temp: Math.round(temp), tmin: Math.round(tmin), gust: Math.round(gust), wind: Math.round(wind), code, text: wxText(code), cat: category };
+}
+const rank = c => c >= 95 ? 9 : c >= 80 ? 7 : c >= 61 ? 6 : c >= 51 ? 4 : c >= 45 ? 3 : c; // which code describes the window best
+
+/* ======================= Alert rules ======================= */
+// Works out what changed since the last run. Returns alerts (each with a type for subscriber preferences)
+// and the new state. Pure, so it can be tested without the network.
+export function evaluate(prev, meeting, sums, fc, now) {
+  const st = { mk: meeting.mk, sessions: {}, rainSoonAt: prev && prev.mk === meeting.mk ? prev.rainSoonAt || 0 : 0 };
+  const old = prev && prev.mk === meeting.mk ? prev.sessions || {} : {};
+  const alerts = [], where = meeting.location;
+  for (const s of meeting.sessions) {
+    const w = sums[s.sk], o = old[s.sk] || {};
+    const ns = { cat: o.cat, severe: { ...(o.severe || {}) } };
+    st.sessions[s.sk] = ns;
+    if (!w || s.end < now) continue;
+    const soon = s.start - now < 72 * 3600e3;
+    ns.cat = w.cat;
+    if (soon && o.cat !== w.cat) {
+      const wetNow = w.cat === 'wet' || w.cat === 'storm', wetBefore = o.cat === 'wet' || o.cat === 'storm';
+      const body = `${w.text}, ${w.prob}% chance of rain, ${w.temp}°C, gusts to ${w.gust} km/h.`;
+      if (wetNow && !wetBefore) alerts.push({ type: 'rainSession', also: 'change', title: `${where}: rain likely for ${s.name}`, body, tag: 'wx-' + s.sk, session: s });
+      else if (!wetNow && wetBefore) alerts.push({ type: 'rainSession', also: 'change', title: `${where}: ${s.name} now looks ${CAT_TEXT[w.cat]}`, body, tag: 'wx-' + s.sk, session: s });
+      else if (o.cat) alerts.push({ type: 'change', title: `${where}: ${s.name} forecast changed`, body: `Was ${CAT_TEXT[o.cat]}, now ${CAT_TEXT[w.cat]}. ${body}`, tag: 'wx-' + s.sk, session: s });
+    }
+    if (soon) {
+      const sev = [];
+      if (w.gust >= 60 && !ns.severe.wind) { ns.severe.wind = 1; sev.push(`gusts up to ${w.gust} km/h`); }
+      if (w.temp >= 35 && !ns.severe.heat) { ns.severe.heat = 1; sev.push(`heat up to ${w.temp}°C`); }
+      if (w.cat === 'storm' && !ns.severe.storm) { ns.severe.storm = 1; sev.push('thunderstorms'); }
+      if (sev.length) alerts.push({ type: 'severe', title: `${where}: severe weather for ${s.name}`, body: 'Expect ' + sev.join(', ') + '.', tag: 'wxs-' + s.sk, urgent: true, session: s });
+    }
+  }
+  // rain at the circuit within the hour, during the race weekend (from the day before the first session)
+  const first = meeting.sessions[0].start, last = meeting.sessions[meeting.sessions.length - 1].end;
+  if (now > first - 24 * 3600e3 && now < last && now - st.rainSoonAt > 3 * 3600e3 && fc.m15.times.length) {
+    let nowP = 0, next = 0;
+    for (let i = 0; i < fc.m15.times.length; i++) {
+      const t = fc.m15.times[i];
+      if (t <= now && t > now - 15 * 60e3) nowP = fc.m15.p[i] || 0;
+      if (t > now && t <= now + 60 * 60e3) next += fc.m15.p[i] || 0;
+    }
+    if (nowP < 0.1 && next >= 0.3) {
+      st.rainSoonAt = now;
+      alerts.push({ type: 'rainSoon', title: `${where}: rain within the hour`, body: `About ${Math.round(next * 10) / 10} mm expected at the circuit in the next hour.`, tag: 'wx-soon', urgent: true });
+    }
+  }
+  return { alerts, state: st };
+}
+export function dailyMessage(meeting, sums, tz, now) {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  const lines = [];
+  for (const s of meeting.sessions) {
+    if (s.end < now || s.start - now > 48 * 3600e3) continue;
+    const w = sums[s.sk]; if (!w) continue;
+    lines.push(`${s.name} (${fmt.format(new Date(s.start))}): ${w.text}, ${w.temp}°C, rain ${w.prob}%`);
+  }
+  if (!lines.length) return null;
+  return { type: 'daily', title: `${meeting.location} weather`, body: lines.join('\n'), tag: 'wx-daily' };
+}
+const localParts = (tz, t) => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(t)).map(x => [x.type, x.value]));
+  return { day: `${p.year}-${p.month}-${p.day}`, hour: +p.hour };
+};
+
+/* ======================= The 15-minute run ======================= */
+export async function weatherRun(storage, now = Date.now()) {
+  const meeting = await nextMeeting(storage, now);
+  if (!meeting) { await storage.put('wx:last', { at: now, meeting: null, error: 'No upcoming sessions in the schedule' }); return { note: 'No upcoming sessions found' }; }
+  const first = meeting.sessions[0].start;
+  const base = { at: now, meeting: { mk: meeting.mk, location: meeting.location, country: meeting.country, circuit: meeting.circuit, first, last: meeting.sessions[meeting.sessions.length - 1].end } };
+  if (first - now > 9.5 * 24 * 3600e3) { // too far ahead to forecast
+    await storage.put('wx:last', { ...base, sessions: meeting.sessions.map(s => ({ sk: s.sk, name: s.name, start: s.start, end: s.end })) });
+    return { note: 'Next race weekend is more than 9 days away' };
+  }
+  const loc = await locate(storage, meeting), fc = await forecast(loc), sums = {};
+  for (const s of meeting.sessions) sums[s.sk] = summarize(fc, s.start, s.end);
+  const prev = await storage.get('wx:state');
+  const { alerts, state } = evaluate(prev, meeting, sums, fc, now);
+  await storage.put('wx:state', state);
+  const cur = fc.current ? { temp: Math.round(fc.current.temperature_2m), text: wxText(fc.current.weather_code), precip: fc.current.precipitation, wind: Math.round(fc.current.wind_speed_10m), gust: Math.round(fc.current.wind_gusts_10m) } : null;
+  await storage.put('wx:last', { ...base, place: loc.place, lat: loc.lat, lon: loc.lon, now: cur,
+    sessions: meeting.sessions.map(s => ({ sk: s.sk, name: s.name, start: s.start, end: s.end, w: sums[s.sk] })) });
+  // deliver
+  const subs = await storage.list({ prefix: 'sub:' });
+  if (!subs.size) return { alerts: alerts.length, sent: 0 };
+  const v = await vapidKeys(storage), subject = (await storage.get('wx:origin')) || 'mailto:kerbside@invalid.example';
+  let sent = 0, gone = 0;
+  for (const [k, rec] of subs) {
+    const p = rec.prefs || {}, mine = alerts.filter(a => p[a.type] || (a.also && p[a.also]));
+    if (p.daily && now > first - 2 * 24 * 3600e3) {
+      const lp = localParts(rec.tz || 'UTC', now);
+      if (lp.hour === 8 && rec.dailySent !== lp.day) { const d = dailyMessage(meeting, sums, rec.tz || 'UTC', now); if (d) mine.unshift(d); rec.dailySent = lp.day; await storage.put(k, rec); }
+    }
+    const batch = mine.length > 3 ? [{ title: `${meeting.location}: ${mine.length} weather updates`, body: mine.map(a => a.title.replace(meeting.location + ': ', '')).join('\n'), tag: 'wx-many' }] : mine;
+    for (const a of batch) {
+      const r = await sendPush(v, rec.sub, { title: a.title, body: a.body, tag: a.tag, url: '/?weather=1', urgent: !!a.urgent }, subject);
+      if (r === 'gone') { await storage.delete(k); gone++; break; }
+      if (r === 'ok') sent++;
+    }
+  }
+  return { alerts: alerts.map(a => a.title), sent, removed: gone };
 }
 
-/* ---------------- Sign at the table ---------------- */
-const SW = 512, SH = 300;
-const cv = document.createElement('canvas'); cv.width = SW; cv.height = SH;
-const tex = new THREE.CanvasTexture(cv);
-const sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false }));
-sign.scale.set(0.3, 0.3 * SH / SW, 1); sign.visible = false; KB.scene.add(sign);
-function drawSign() {
-  const c = cv.getContext('2d'), d = W.data;
-  c.clearRect(0, 0, SW, SH);
-  KB.rr(c, 0, 0, SW, SH, 26); c.fillStyle = 'rgba(32,38,43,0.93)'; c.fill();
-  c.fillStyle = '#4F9FD9'; c.fillRect(0, 0, SW, 10);
-  c.fillStyle = '#E9E6DF'; c.font = '700 40px "Barlow Condensed", sans-serif'; c.textBaseline = 'alphabetic';
-  c.fillText(d && d.meeting ? d.meeting.location : 'Circuit weather', 24, 58);
-  const list = d && d.sessions ? d.sessions.filter(s => s.end > Date.now()).slice(0, 4) : [];
-  if (!list.length) { c.font = '500 26px Barlow'; c.fillStyle = '#94A1A8'; c.fillText(d ? 'No forecast yet' : 'Loading…', 24, 120); }
-  list.forEach((s, i) => {
-    const y = 100 + i * 50, w = s.w;
-    c.font = '32px sans-serif'; c.fillText(icon(w), 22, y + 8);
-    c.font = '600 28px "Barlow Condensed"'; c.fillStyle = '#E9E6DF'; c.fillText(s.name, 70, y + 4);
-    c.font = '500 22px Barlow'; c.fillStyle = '#94A1A8'; c.fillText(when(s.start), 70, y + 28);
-    c.textAlign = 'right'; c.font = '600 28px "Barlow Condensed"';
-    c.fillStyle = w && (w.cat === 'wet' || w.cat === 'storm') ? '#4F9FD9' : '#E9E6DF';
-    c.fillText(w ? `${w.temp}°  ${w.prob}%` : '–', SW - 24, y + 12); c.textAlign = 'left'; c.fillStyle = '#E9E6DF';
-  });
-  tex.needsUpdate = true;
+/* ======================= HTTP endpoints (called from the Durable Object) ======================= */
+async function subKey(endpoint) { return 'sub:' + b64u.enc(await crypto.subtle.digest('SHA-256', enc.encode(endpoint))).slice(0, 24); }
+export async function weatherRequest(storage, request, url) {
+  const p = url.pathname;
+  if (p === '/weather') {
+    let last = await storage.get('wx:last');
+    if (!last || !last.at || Date.now() - last.at > 30 * 60e3) {
+      try { await weatherRun(storage); } catch (e) { await storage.put('wx:last', { ...(last || {}), at: Date.now(), error: String(e.message || e) }); }
+      last = await storage.get('wx:last');
+    }
+    return Response.json(last || { at: null });
+  }
+  if (p === '/push/key') return Response.json({ key: (await vapidKeys(storage)).pub });
+  if (p === '/push/subscribe' && request.method === 'POST') {
+    let b; try { b = await request.json(); } catch (e) { return Response.json({ error: 'bad json' }, { status: 400 }); }
+    const sub = b && b.sub;
+    if (!sub || !/^https:\/\//.test(sub.endpoint || '') || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) return Response.json({ error: 'bad subscription' }, { status: 400 });
+    const prefs = {}; for (const k of ['rainSession', 'daily', 'rainSoon', 'severe', 'change']) prefs[k] = !!(b.prefs && b.prefs[k]);
+    const k = await subKey(sub.endpoint), old = await storage.get(k);
+    let tz = 'UTC'; try { new Intl.DateTimeFormat('en', { timeZone: b.tz }); tz = b.tz || 'UTC'; } catch (e) {}
+    await storage.put(k, { sub: { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } }, prefs, tz, dailySent: old && old.dailySent, since: (old && old.since) || Date.now() });
+    if (b.origin && /^https:\/\//.test(b.origin)) await storage.put('wx:origin', b.origin);
+    if (b.test) {
+      const v = await vapidKeys(storage), r = await sendPush(v, (await storage.get(k)).sub, { title: 'Kerbside weather alerts are on', body: 'You’ll get the alerts you picked for each Grand Prix weekend.', tag: 'wx-test', url: '/?weather=1' }, (await storage.get('wx:origin')) || 'mailto:kerbside@invalid.example');
+      return Response.json({ ok: true, test: r });
+    }
+    return Response.json({ ok: true });
+  }
+  if (p === '/push/unsubscribe' && request.method === 'POST') {
+    let b; try { b = await request.json(); } catch (e) { b = {}; }
+    if (b.endpoint) await storage.delete(await subKey(b.endpoint));
+    return Response.json({ ok: true });
+  }
+  return null;
 }
-const tv = new THREE.Vector3();
-function placeSign() {
-  const driving = window.KBDrive && KBDrive.active;
-  const show = W.sign && App.view === 'tabletop' && !driving && !!App.track && !!W.data && (!renderer.xr.isPresenting || App.placed);
-  sign.visible = show; if (!show) return;
-  // just off the far corner of the table, turning with it
-  const xr = renderer.xr.isPresenting, s = xr ? App.tableScale : 1;
-  const cx = xr ? App.anchor.x : 0, cy = xr ? App.anchor.y : 0, cz = xr ? App.anchor.z : 0, a = App.tableYaw;
-  const lx = 0.62 * s, lz = -0.5 * s;
-  tv.set(cx + lx * Math.cos(a) + lz * Math.sin(a), cy + 0.2, cz - lx * Math.sin(a) + lz * Math.cos(a));
-  sign.position.copy(tv);
-}
-
-/* ---------------- Per frame and start-up ---------------- */
-let lastFetch = 0;
-function frame() {
-  placeSign();
-  if (Date.now() - lastFetch > 5 * 60e3) { lastFetch = Date.now(); refresh(); }
-}
-const css = document.createElement('style');
-css.textContent = `.wxlist{list-style:none;margin:6px 0;padding:0}.wxlist li{display:grid;grid-template-columns:28px 1fr auto;gap:8px;align-items:center;padding:5px 0;border-top:1px solid var(--tarmac-3)}
-.wxlist li:first-child{border-top:0}.wxlist .wi{font-size:20px;text-align:center}.wxlist .wv{text-align:right;font:600 16px/1.2 var(--cond)}.wxlist small{color:var(--muted);font:400 12px/1.2 var(--body)}
-.wxnow{margin:4px 0;font-size:14px}`;
-document.head.appendChild(css);
-render();
-if (/[?&]weather=1/.test(location.search)) { document.body.classList.add('dock-open'); setTimeout(() => { const p = $('#wxPane'); p && p.scrollIntoView({ block: 'start' }); }, 300); }
-
-window.KBWeather = { frame, refresh, headline: () => headline(W.data), build: WEATHER_BUILD };
-})();
