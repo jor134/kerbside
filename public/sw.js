@@ -1,6 +1,6 @@
 // Kerbside service worker: keeps an offline copy of the app shell and satellite tiles.
 // The page itself is always fetched fresh when online, so a stale copy can't break a new version.
-const CACHE = 'kerbside-v30';
+const CACHE = 'kerbside-v32';
 const TILES = 'kerbside-tiles';
 const TILE_HOSTS = ['server.arcgisonline.com', 'api.maptiler.com', 'raw.githubusercontent.com'];
 const SHELL = ['manifest.webmanifest', 'icon-192.png', 'icon-512.png',
@@ -22,7 +22,7 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET') return;
   if (url.hostname.includes('openf1.org')) return;
-  if (url.origin === location.origin && (url.pathname === '/ws' || url.pathname === '/status' || url.pathname === '/track' || url.pathname.startsWith('/tracks') || url.pathname === '/room' || url.pathname === '/hang' || url.pathname === '/ice' || url.search.includes('reset'))) return;
+  if (url.origin === location.origin && (url.pathname === '/ws' || url.pathname === '/status' || url.pathname === '/track' || url.pathname.startsWith('/tracks') || url.pathname === '/room' || url.pathname === '/hang' || url.pathname === '/ice' || url.pathname === '/weather' || url.pathname.startsWith('/push/') || url.search.includes('reset'))) return;
   if (TILE_HOSTS.includes(url.hostname)) {
     e.respondWith(caches.open(TILES).then(c => c.match(e.request).then(hit => hit || fetch(e.request).then(r => { if (r.ok) c.put(e.request, r.clone()); return r; }))));
     return;
@@ -47,4 +47,20 @@ self.addEventListener('fetch', e => {
     }
     return r;
   })));
+});
+
+// Weather alerts from the Worker
+self.addEventListener('push', e => {
+  let m = {}; try { m = e.data ? e.data.json() : {}; } catch (err) { m = { title: 'Kerbside', body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(m.title || 'Kerbside weather', {
+    body: m.body || '', tag: m.tag || 'kerbside', renotify: !!m.urgent, icon: 'icon-192.png', badge: 'icon-192.png', data: { url: m.url || '/' }
+  }));
+});
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const url = new URL((e.notification.data && e.notification.data.url) || '/', self.location.origin).href;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    for (const c of list) if (c.url.startsWith(self.location.origin) && 'focus' in c) { c.navigate && c.navigate(url).catch(() => {}); return c.focus(); }
+    return self.clients.openWindow(url);
+  }));
 });

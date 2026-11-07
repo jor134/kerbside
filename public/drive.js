@@ -223,7 +223,7 @@ if (!window.KB) return; // loaded for testing only
 /* =====================================================================
    Game: everything that touches the page, the 3D scene or the headset
    ===================================================================== */
-const DRIVE_BUILD = 3;
+const DRIVE_BUILD = 4;
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const Sim = makeSim(THREE);
 const { clamp, wrapA, wrapD } = Sim;
@@ -254,7 +254,9 @@ const D = {
 function carGroup(color, opacity) {
   const g = new THREE.Group(), t = opacity < 1;
   g.add(new THREE.Mesh(KB.CarGeo.body, new THREE.MeshToonMaterial({ color, transparent: t, opacity, depthWrite: !t })));
-  g.add(new THREE.Mesh(KB.CarGeo.dark, t ? new THREE.MeshToonMaterial({ color: 0x1c1f22, transparent: true, opacity, depthWrite: false }) : KB.darkMat));
+  const darkM = t ? new THREE.MeshToonMaterial({ color: 0x1c1f22, transparent: true, opacity, depthWrite: false }) : KB.darkMat;
+  g.add(new THREE.Mesh(KB.CarGeo.dark, darkM));
+  const post = new THREE.Mesh(KB.CarGeo.post, darkM); g.add(post); g.userData.post = post;
   return g;
 }
 function addMeshes(ent, color, tla, opacity) {
@@ -797,6 +799,7 @@ function eyeFor(view, c, yaw, out) {
   return out.set(c.x, c.y + 2.6, c.z).addScaledVector(f, -7.5);
 }
 function updateFlatCam(dt) {
+  KB.setGhostPost(D.view === 'cockpit' && D.player ? D.player.real : null);
   const c = D.player; if (!c) return;
   if (!camInit) { camYaw = c.h; camInit = true; }
   camYaw += wrapA(c.h - camYaw) * (D.view === 'cockpit' ? 1 : Math.min(1, dt * 6));
@@ -1356,6 +1359,7 @@ function frame(dt, xrFrame) {
   }
   // render
   if (xr) {
+    KB.setGhostPost(null);
     const full = fullSizeXR();
     if (full) placeWorldXR(dt);
     if (hudMesh.visible) placeHud();
@@ -1401,6 +1405,7 @@ const Drive = {
     xrMenuMesh.visible = hudMesh.visible = wheel.visible = vig.visible = false;
     App.forceRealModel = false; KB.rebuildModelTrack(); KB.layoutModel();
     App.trackOverride = null; KB.applyTrackVis(); layoutBoards(true);
+    KB.setGhostPost(null);
     if (renderer.xr.isPresenting) { KB.uiMesh.visible = true; for (const c of KB.controllers) c.userData.line.visible = true; KB.positionPanels(); }
   },
   frame, onSelect: onSelectXR,

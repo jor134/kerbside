@@ -182,6 +182,8 @@ body:not(.board-open) #board{display:none}
     <p class="hint">A shared room with voice chat. Everyone sees the same race, and friends appear around your table.</p>
   </section>
 
+  <section id="wxPane"><h3>Circuit weather</h3><p class="hint">Loading the forecast…</p></section>
+
   <section>
     <h3>View</h3>
     <div class="seg" id="viewSeg">
@@ -626,7 +628,7 @@ const CarGeo = (() => {
   const helmet = new THREE.SphereGeometry(0.17, 14, 10); helmet.translate(0, 0.84, 0.42); body.push(helmet);
   // halo over the cockpit
   const halo = new THREE.TorusGeometry(0.3, 0.035, 6, 20, Math.PI); halo.rotateX(-Math.PI / 2); halo.rotateY(Math.PI); halo.translate(0, 1.06, 0.52); dark.push(halo); // just above the cockpit camera's eye line
-  B(0.05, 0.36, 0.05, 0, 0.88, 0.82, dark);
+  const post = []; B(0.05, 0.36, 0.05, 0, 0.88, 0.82, post); // halo centre post: its own part, so cockpit view can see through it
   // floor and diffuser
   B(1.45, 0.04, 2.9, 0, 0.1, -0.35, dark);
   B(1.05, 0.2, 0.5, 0, 0.17, -2.0, dark, -0.35);
@@ -656,13 +658,25 @@ const CarGeo = (() => {
   }
   // mirrors
   for (const sx of [-1, 1]) { B(0.16, 0.07, 0.04, sx * 0.48, 0.76, 0.95, body); B(0.03, 0.12, 0.03, sx * 0.4, 0.7, 0.95, dark); }
-  return { body: mergeGeos(body), dark: mergeGeos(dark) };
+  return { body: mergeGeos(body), dark: mergeGeos(dark), post: mergeGeos(post) };
 })();
+const postGhostMat = new THREE.MeshToonMaterial({ color: 0x1c1f22, transparent: true, opacity: 0.12, depthWrite: false });
 function carMesh(color) {
   const g = new THREE.Group();
   g.add(new THREE.Mesh(CarGeo.body, new THREE.MeshToonMaterial({ color })));
   g.add(new THREE.Mesh(CarGeo.dark, darkMat));
+  const post = new THREE.Mesh(CarGeo.post, darkMat); g.add(post); g.userData.post = post;
   return g;
+}
+// Cockpit view on a screen: the halo's centre post of the car you're riding in turns see-through.
+// In the headset it stays solid, like a real onboard.
+let ghostPost = null;
+function setGhostPost(group) {
+  const want = group && !renderer.xr.isPresenting ? group.userData.post : null;
+  if (ghostPost === want) return;
+  if (ghostPost) ghostPost.material = ghostPost.userData.solid || darkMat;
+  if (want) { want.userData.solid = want.userData.solid || want.material; want.material = postGhostMat; }
+  ghostPost = want;
 }
 function labelSprite(tla, color) {
   // drawn at 4× resolution so the bigger labels stay crisp
@@ -1687,10 +1701,11 @@ function updateCars(dt) {
 const cockpitCam = new THREE.PerspectiveCamera(72, 16 / 9, 0.1, 16000); cockpitCam.layers.set(REAL);
 const ckLook = new THREE.Vector3();
 function updateCockpitCam() {
-  if (App.view !== 'cockpit' || !App.track) return;
+  if (App.view !== 'cockpit' || !App.track || (window.KBDrive && KBDrive.active)) { if (!(window.KBDrive && KBDrive.active)) setGhostPost(null); return; }
   const car = App.chaseNum && Cars.get(App.chaseNum);
   const pick = car && car.valid ? car : [...Cars.values()].find(c => c.valid);
   if (!pick) return;
+  setGhostPost(pick.real);
   const tr = App.track, f = vQ.set(Math.sin(pick.head), 0, Math.cos(pick.head));
   cockpitCam.position.copy(pick.pos).addScaledVector(f, 0.15); cockpitCam.position.y += 1.05;
   const ahead = tr.pts[(pick.idx + Math.round(30 / (tr.length / tr.N))) % tr.N];
@@ -1865,7 +1880,7 @@ function resize() {
 addEventListener('resize', resize); resize();
 
 /* ================= Headset panels ================= */
-const UIW = 1024, UIH = 980;
+const UIW = 1024, UIH = 1030;
 const uiCanvas = document.createElement('canvas'); uiCanvas.width = UIW; uiCanvas.height = UIH;
 const uctx = uiCanvas.getContext('2d');
 const uiTex = new THREE.CanvasTexture(uiCanvas);
@@ -1988,7 +2003,8 @@ function drawXRPanel() {
       btn(x4, y4, 110, 'Size ' + App.ptSize, false, () => { App.ptSize = sz[(sz.indexOf(App.ptSize) + 1) % 3]; store.set('ptSize', App.ptSize); });
     } else btn(x4, y4, 190, 'Turn garage', false, () => { App.garageTurn = ((App.garageTurn || 0) + Math.PI / 2) % (2 * Math.PI); });
   }
-  const y5 = 876;
+  if (window.KBWeather) { c.font = '600 24px "Barlow Condensed", sans-serif'; c.fillStyle = '#4F9FD9'; const t = KBWeather.headline(); c.fillText(t.length > 80 ? t.slice(0, 79) + '…' : t, 32, 900); }
+  const y5 = 926;
   btn(32, y5, 190, 'Open F1 TV', false, openF1TV);
   c.font = '500 19px Barlow, sans-serif'; c.fillStyle = '#94A1A8';
   c.fillText('Sign in, choose Watch live, make the player full screen,', 240, y5 + 26);
@@ -2190,6 +2206,7 @@ function frameBody(time, frame) {
   const now = performance.now(), dt = Math.min(0.1, App.lastT ? (now - App.lastT) / 1000 : 0.016); App.lastT = now; frameNo++;
   if (window.KBHang) KBHang.frame(dt, frame); // voice and avatars keep running in every mode
   if (window.KBGarage) KBGarage.frame(dt);
+  if (window.KBWeather) KBWeather.frame(dt);
   if (window.KBDrive && KBDrive.active) { KBDrive.frame(dt, frame); return; }
   if (App.source === 'replay') Replay.tick(dt);
   if (App.source === 'live') Live.tick();
@@ -2327,9 +2344,12 @@ window.KB = {
   CarGeo, darkMat, CAR_LEN, labelSprite, modelCarLen, Cars, Replay, Live, orbit, flatCamTick,
   Track, setTrack, cacheTrack, cachedTrack, sharedTrack, packTrack, outlineFromSession, relayInfo,
   layoutModel, rebuildModelTrack, positionPanels, xrHead, xrForward, enterXR, placementTick, placeAtReticle,
-  uiMesh, chaseMesh, controllers, applyTrackVis, showSource, setEnv, getSessions: () => sessions
+  uiMesh, chaseMesh, controllers, applyTrackVis, showSource, setEnv, setGhostPost, getSessions: () => sessions
 };
-const DRIVE_VER = '3'; // bump whenever drive.js changes, so devices don't keep an old copy
+(function loadWeather() { // circuit weather: menu section, table sign, alerts
+  const sc = document.createElement('script'); sc.src = 'weather.js?v=1'; sc.async = true; document.head.appendChild(sc);
+})();
+const DRIVE_VER = '4'; // bump whenever drive.js changes, so devices don't keep an old copy
 let driveLoading = null;
 function loadDrive() {
   if (window.KBDrive) return Promise.resolve();
