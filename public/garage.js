@@ -1,11 +1,14 @@
 // Kerbside pit garage: a fully virtual team garage built around the circuit table, with the pit lane,
-// track and a grandstand out of the open front. Loaded on demand by index.html.
+// track and a grandstand out of the open front, and a pitwall stand across the pit lane you can jump to.
+// Full-size cars drive down the straight and through the pit lane from the live or replay data, and the
+// garage and pitwall screens show timing, the track map, weather and live camera views.
+// Loaded on demand by index.html.
 // In the headset the garage replaces your room; an optional cut-out window shows your real room (your TV).
 // On an iPad or phone it's the background behind the table.
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 3;
+const GARAGE_BUILD = 4;
 
 /* ---------------- Materials ---------------- */
 const toon = c => new THREE.MeshToonMaterial({ color: c });
@@ -30,6 +33,10 @@ function setTeamColor(hex) { teamMat.color.set(hex || '#D2342B'); }
 // Local frame: floor at y = 0, the table at the origin, +z towards where you stood when you placed the table,
 // the open front onto the pit lane at -z.
 const W = 9, Dback = 5.5, Dfront = -6.5, Ht = 4.6;
+const STRAIGHT = 560, HALF = 270; // metres of straight you can see either side of your garage
+const Z = { work: Dfront - 2.6, fast: Dfront - 7.3, wall: Dfront - 10.5, track: Dfront - 18 }; // lanes, wall and track centre lines
+const STAND = { floor: 1.1, screenY: 3.32, feetZ: Dfront - 10.5 + 0.75 }; // pitwall platform height, screen height, where you stand
+const teamMats = [];
 function box(g, w, h, d, x, y, z, mat, ry) { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); if (ry) m.rotation.y = ry; g.add(m); return m; }
 function cyl(g, r, h, x, y, z, mat, axis) { const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 20), mat); m.position.set(x, y, z); if (axis === 'x') m.rotation.z = Math.PI / 2; if (axis === 'z') m.rotation.x = Math.PI / 2; g.add(m); return m; }
 const bandMat = {};
@@ -58,9 +65,9 @@ function build() {
   box(G, W, 0.9, 0.35, 0, Ht - 0.45, Dfront, M.wall);
   cyl(G, 0.32, W - 0.4, 0, Ht - 1.1, Dfront + 0.15, M.steel, 'x');
   for (const sx of [-1, 1]) box(G, 0.45, Ht, 0.45, sx * (W / 2 - 0.1), Ht / 2, Dfront, M.wall);
-  // overhead gantry with the timing monitor, facing back into the garage
-  box(G, 6, 0.12, 0.12, 0, 3.75, -3.2, M.steel);
-  for (const x of [-2.7, 2.7]) box(G, 0.08, Ht - 3.75, 0.08, x, (Ht + 3.75) / 2, -3.2, M.steel);
+  // overhead gantry with the video wall, facing back into the garage
+  box(G, 8.3, 0.12, 0.12, 0, 3.75, -3.2, M.steel);
+  for (const x of [-4.1, 4.1]) box(G, 0.08, Ht - 3.75, 0.08, x, (Ht + 3.75) / 2, -3.2, M.steel);
   // the race car on jacks, nose out
   const car = new THREE.Group();
   car.add(new THREE.Mesh(KB.CarGeo.body, teamMat), new THREE.Mesh(KB.CarGeo.dark, garageDark));
@@ -78,18 +85,48 @@ function build() {
   const bands = [0xe8483b, 0xf2c84b, 0xe9e6df];
   box(G, 0.9, 0.06, 3.2, W / 2 - 0.6, 1.7, 3.6, M.steel);
   for (let s = 0; s < 3; s++) for (let k = 0; k < 4; k++) tyre(G, W / 2 - 0.6, 0.18 + k * 0.37, 2.4 + s * 0.95, bands[s]);
-  // pit lane, pit wall, track, grass and a grandstand out front
-  box(G, 70, 0.2, 10, 0, -0.1, Dfront - 5, M.asphalt);
-  box(G, 70, 0.01, 0.12, 0, 0.005, Dfront - 1.2, M.paintWhite);
-  box(G, 70, 0.01, 0.12, 0, 0.005, Dfront - 9.5, M.paintWhite);
-  box(G, 70, 1.1, 0.4, 0, 0.55, Dfront - 10.5, M.concrete);
-  for (let x = -34; x <= 34; x += 3) box(G, 0.06, 2.4, 0.06, x, 2.3, Dfront - 10.5, M.steel);
-  box(G, 70, 0.2, 14, 0, -0.12, Dfront - 18, M.asphalt); // track surface 2 cm below the pit lane
-  const grass = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), M.grass); grass.rotation.x = -Math.PI / 2; grass.position.y = -0.35; G.add(grass); // well below everything, so it never flickers through at a distance
-  box(G, 80, 0.32, 9, 0, -0.19, Dfront - 29.5, M.grass); // verge between the track and the grandstand, level with the track
-  for (let k = 0; k < 7; k++) box(G, 80, 0.9 * (k + 1) + 0.35, 2.2, 0, 0.45 * (k + 1) - 0.175, Dfront - 34 - k * 2.2, M.stand); // down to the grass
-  box(G, 84, 0.5, 18, 0, 9.5, Dfront - 40, M.roof);
-  for (const x of [-40, 0, 40]) box(G, 0.6, 9.85, 0.6, x, 4.575, Dfront - 48, M.steel);
+  // pit lane, pit wall, track, grass and a grandstand out front, long enough to watch cars come and go
+  const L = STRAIGHT;
+  box(G, L, 0.2, 10, 0, -0.1, Dfront - 5, M.asphalt);
+  box(G, L, 0.01, 0.12, 0, 0.005, Dfront - 1.2, M.paintWhite);
+  box(G, L, 0.01, 0.12, 0, 0.005, Dfront - 5.0, M.paintWhite); // working lane | fast lane
+  box(G, L, 0.01, 0.12, 0, 0.005, Dfront - 9.5, M.paintWhite);
+  box(G, L, 1.1, 0.4, 0, 0.55, Z.wall, M.concrete);
+  for (let x = -L / 2 + 1; x <= L / 2; x += 3) box(G, 0.06, 2.4, 0.06, x, 2.3, Z.wall, M.steel);
+  box(G, L, 0.04, 0.04, 0, 3.5, Z.wall, M.steel);
+  box(G, L, 0.2, 14, 0, -0.12, Z.track, M.asphalt); // track surface 2 cm below the pit lane
+  for (const z of [Z.track + 6.6, Z.track - 6.6]) box(G, L, 0.01, 0.2, 0, -0.015, z, M.paintWhite); // track edges
+  for (let k = 0; k < 28; k++) for (let j = 0; j < 2; j++) box(G, 0.5, 0.01, 0.5, (j - 0.5) * 0.5, -0.014, Z.track - 7 + 0.25 + k * 0.5, (k + j) % 2 ? M.white : M.dark); // chequered start/finish line
+  const grass = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400), M.grass); grass.rotation.x = -Math.PI / 2; grass.position.y = -0.35; G.add(grass); // well below everything, so it never flickers through at a distance
+  box(G, L + 20, 0.32, 9, 0, -0.19, Dfront - 29.5, M.grass); // verge between the track and the grandstand, level with the track
+  for (let k = 0; k < 7; k++) box(G, L * 0.7, 0.9 * (k + 1) + 0.35, 2.2, 0, 0.45 * (k + 1) - 0.175, Dfront - 34 - k * 2.2, M.stand); // down to the grass
+  box(G, L * 0.7 + 4, 0.5, 18, 0, 9.5, Dfront - 40, M.roof);
+  for (let x = -L * 0.35; x <= L * 0.35; x += 40) box(G, 0.6, 9.85, 0.6, x, 4.575, Dfront - 48, M.steel);
+  // the rest of the pit row: other teams' garages either side of yours
+  const TEAM = [0x3671c6, 0x27f4d2, 0xff8000, 0x229971, 0x0093cc, 0x64c4ff, 0xb6babd, 0x52e252, 0xe8002d, 0x6692ff];
+  for (const sx of [-1, 1]) {
+    const len = L / 2 - W / 2, cx = sx * (W / 2 + len / 2);
+    box(G, len, Ht, 12, cx, Ht / 2, Dfront + 6.6, M.back); // dark garage interiors, set back from the front
+    box(G, len, 2.2, 12.6, cx, Ht + 1.1, Dfront + 6.3, M.dark); // hospitality floor above, glass front
+    box(G, len, 0.25, 13, cx, Ht + 2.3, Dfront + 6.5, M.roof);
+    box(G, len, 0.2, 13, cx, -0.1, Dfront + 6.5, M.floor);
+    for (let k = 0; k * 9 < len - 1; k++) {
+      const x = sx * (W / 2 + 4.5 + k * 9);
+      box(G, 9, 0.9, 0.35, x, Ht - 0.45, Dfront, M.wall);
+      box(G, 8.6, 0.25, 0.37, x, Ht - 0.2, Dfront, teamMats[k % TEAM.length] || (teamMats[k % TEAM.length] = toon(TEAM[k % TEAM.length])));
+      box(G, 0.45, Ht, 0.45, x + sx * 4.5, Ht / 2, Dfront, M.wall);
+    }
+  }
+  // your team's pitwall stand on the wall: platform, roof and a row of screens
+  const S = STAND;
+  box(G, 7.4, 0.2, 1.9, 0, S.floor - 0.1, Z.wall + 0.55, M.steel);
+  for (const x of [-3.5, 3.5]) { box(G, 0.12, S.floor, 0.12, x, S.floor / 2, Z.wall + 1.4, M.steel); box(G, 0.1, 3.9 - S.floor, 0.1, x, (3.9 + S.floor) / 2, Z.wall - 0.3, M.steel); }
+  box(G, 7.4, 0.06, 0.06, 0, S.floor + 1.05, Z.wall + 1.45, M.steel); // handrail on the pit-lane side
+  box(G, 7.8, 0.15, 2.6, 0, 3.95, Z.wall + 0.4, M.dark);
+  box(G, 7.8, 0.32, 0.06, 0, 3.8, Z.wall + 1.7, teamMat);
+  box(G, 7.2, 0.86, 0.1, 0, S.screenY, Z.wall - 0.3, M.dark); // backing for the screens
+  // steps up from the pit lane
+  for (let k = 0; k < 5; k++) box(G, 1.0, 0.22, 0.3, -4.2, 0.11 + k * 0.22, Z.wall + 2.2 - k * 0.3, M.steel);
   // sky
   const sky = new THREE.Mesh(new THREE.SphereGeometry(420, 32, 16), new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false,
@@ -103,12 +140,29 @@ function build() {
   const top = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), M.dark); plinth.add(top);
   const edge = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), teamMat); plinth.add(edge);
   G.add(plinth);
-  // timing monitor
-  const mon = monitor(); mon.mesh.position.set(-1.5, 3.05, -3.14); G.add(mon.mesh);
-  box(G, 2.06, 1.32, 0.08, -1.5, 3.05, -3.2, M.dark);
-  bake(G, new Set([sky, plinth, mon.mesh, car]));
+  // screens: a video wall in the garage and a row on the pitwall, sharing the same pictures
+  const keep = new Set([sky, plinth, car]);
+  const screen = (tex, w, h, x, y, z, tilt) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex }));
+    m.position.set(x, y, z); if (tilt) m.rotation.x = tilt; G.add(m); keep.add(m);
+    box(G, w + 0.06, h + 0.06, 0.05, x, y, z - 0.035, M.dark).rotation.x = tilt || 0;
+    return m;
+  };
+  const camLabel = (lab, w, x, y, z, tilt) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, w * 0.11), new THREE.MeshBasicMaterial({ map: lab.tex, transparent: true }));
+    m.position.set(x, y, z + 0.01); if (tilt) m.rotation.x = tilt; G.add(m); keep.add(m); };
+  const SW = 1.9, SH = 1.18, SY = 3.05, SZ = -3.14;
+  screen(SCR.timing.tex, SW, SH, -3.0, SY, SZ); screen(SCR.map.tex, SW, SH, -1.0, SY, SZ);
+  screen(SCR.cam[0].rt.texture, SW, SW * 9 / 16, 1.0, SY, SZ); camLabel(SCR.cam[0].label, SW, 1.0, SY - SW * 9 / 32 + SW * 0.055, SZ);
+  screen(SCR.weather.tex, SW, SH, 3.0, SY, SZ);
+  const PW = 1.36, PH = PW * 0.625, PZ = Z.wall - 0.24, T = 0.22;
+  screen(SCR.timing.tex, PW, PH, -2.8, STAND.screenY, PZ, T); screen(SCR.map.tex, PW, PH, -1.4, STAND.screenY, PZ, T);
+  screen(SCR.cam[0].rt.texture, PW, PW * 9 / 16, 0, STAND.screenY, PZ, T); camLabel(SCR.cam[0].label, PW, 0, STAND.screenY - PW * 9 / 32 + PW * 0.06, PZ, T);
+  screen(SCR.cam[1].rt.texture, PW, PW * 9 / 16, 1.4, STAND.screenY, PZ, T); camLabel(SCR.cam[1].label, PW, 1.4, STAND.screenY - PW * 9 / 32 + PW * 0.06, PZ, T);
+  screen(SCR.weather.tex, PW, PH, 2.8, STAND.screenY, PZ, T);
+  const traffic = new THREE.Group(); G.add(traffic); keep.add(traffic);
+  bake(G, keep);
   G.traverse(o => { if (o.material) [].concat(o.material).forEach(outsideWindow); });
-  return { G, plinth, top, edge, mon };
+  return { G, plinth, top, edge, traffic };
 }
 
 // Merge the garage's ~130 fixed pieces into one mesh per material: a handful of draw calls per eye
@@ -137,19 +191,26 @@ function bake(G, keep) {
   } catch (e) { /* if merging fails, the separate pieces still draw */ }
 }
 
-/* ---------------- Timing monitor ---------------- */
-function monitor() {
-  const cv = document.createElement('canvas'); cv.width = 768; cv.height = 480;
-  const tex = new THREE.CanvasTexture(cv);
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.96, 1.22), new THREE.MeshBasicMaterial({ map: tex }));
-  return { cv, tex, mesh, t: 0 };
+/* ---------------- Screens ---------------- */
+// Canvas screens (timing, track map, weather) redraw a few times a second; the two camera screens are
+// small render targets of the full-size circuit, drawn in turn at about 12 frames a second each.
+function canvasScreen(w, h) { const cv = document.createElement('canvas'); cv.width = w; cv.height = h; return { cv, tex: new THREE.CanvasTexture(cv) }; }
+function camScreen(name) {
+  const rt = new THREE.WebGLRenderTarget(640, 360);
+  const cam = new THREE.PerspectiveCamera(name === 'tv' ? 34 : 72, 16 / 9, 0.3, 6000); cam.layers.set(KB.REAL);
+  return { name, rt, cam, label: canvasScreen(512, 56), pos: new THREE.Vector3(), look: new THREE.Vector3(), init: false, num: null };
 }
-function drawMonitor(mon) {
-  const c = mon.cv.getContext('2d'), W = 768, H = 480;
-  c.fillStyle = '#0e1215'; c.fillRect(0, 0, W, H);
-  c.fillStyle = '#D2342B'; c.fillRect(0, 0, W, 8);
-  c.fillStyle = '#E9E6DF'; c.font = '700 40px "Barlow Condensed", sans-serif'; c.textBaseline = 'alphabetic';
-  c.fillText(App.lapText || 'Timing', 24, 58);
+const SCR = { timing: canvasScreen(768, 480), map: canvasScreen(768, 480), weather: canvasScreen(768, 480), cam: [camScreen('onboard'), camScreen('tv')] };
+function header(c, W, title, right) {
+  c.fillStyle = '#0e1215'; c.fillRect(0, 0, W, 480);
+  c.fillStyle = teamMat.color.getStyle(); c.fillRect(0, 0, W, 8);
+  c.fillStyle = '#E9E6DF'; c.font = '700 40px "Barlow Condensed", sans-serif'; c.textBaseline = 'alphabetic'; c.textAlign = 'left';
+  c.fillText(title, 24, 58);
+  if (right) { c.textAlign = 'right'; c.font = '500 26px Barlow, sans-serif'; c.fillStyle = '#94A1A8'; c.fillText(right, W - 24, 56); c.textAlign = 'left'; }
+}
+function drawTiming() {
+  const c = SCR.timing.cv.getContext('2d'), W = 768;
+  header(c, W, App.lapText || 'Timing');
   if (App.flag && App.flag.text) {
     c.font = '600 30px "Barlow Condensed"'; const w = c.measureText(App.flag.text).width + 24;
     c.fillStyle = App.flag.color || '#3A454C'; KB.rr(c, W - 24 - w, 22, w, 44, 8); c.fill();
@@ -161,12 +222,188 @@ function drawMonitor(mon) {
     const col = i < 10 ? 0 : 1, x = 24 + col * 372, y = 92 + (i % 10) * 37;
     c.fillStyle = '#94A1A8'; c.font = '600 28px "Barlow Condensed"'; c.textAlign = 'right'; c.fillText(String(r.pos), x + 30, y + 28); c.textAlign = 'left';
     c.fillStyle = r.color; c.fillRect(x + 42, y + 6, 6, 26);
-    c.fillStyle = '#E9E6DF'; c.font = '700 30px "Barlow Condensed"'; c.fillText(r.tla, x + 58, y + 29);
+    c.fillStyle = r.num === App.chaseNum ? '#F2B233' : '#E9E6DF'; c.font = '700 30px "Barlow Condensed"'; c.fillText(r.tla, x + 58, y + 29);
     c.fillStyle = r.pit ? '#F2B233' : '#94A1A8'; c.font = '500 24px Barlow'; c.textAlign = 'right';
     c.fillText(r.pit ? 'pit' : (r.gap || ''), x + 340, y + 28); c.textAlign = 'left';
   });
-  mon.tex.needsUpdate = true;
+  SCR.timing.tex.needsUpdate = true;
 }
+let mapFor = null, mapPath = null, mapK = 1, mapOx = 0, mapOy = 0;
+function drawMap() {
+  const c = SCR.map.cv.getContext('2d'), W = 768, H = 480, tr = App.track;
+  header(c, W, 'Track', tr ? '' : 'no circuit loaded');
+  if (!tr) { SCR.map.tex.needsUpdate = true; return; }
+  if (mapFor !== tr) { // fit the circuit into the screen once per circuit
+    mapFor = tr; let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const p of tr.pts) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z); }
+    mapK = Math.min((W - 80) / (x1 - x0 || 1), (H - 120) / (z1 - z0 || 1));
+    mapOx = W / 2 - (x0 + x1) / 2 * mapK; mapOy = 72 + (H - 72) / 2 - (z0 + z1) / 2 * mapK;
+    mapPath = new Path2D(); tr.pts.forEach((p, i) => i ? mapPath.lineTo(p.x * mapK + mapOx, p.z * mapK + mapOy) : mapPath.moveTo(p.x * mapK + mapOx, p.z * mapK + mapOy)); mapPath.closePath();
+  }
+  c.lineJoin = 'round'; c.strokeStyle = '#3A454C'; c.lineWidth = 16; c.stroke(mapPath); c.strokeStyle = '#6F7A82'; c.lineWidth = 6; c.stroke(mapPath);
+  const p0 = tr.pts[0]; c.fillStyle = '#E9E6DF'; c.fillRect(p0.x * mapK + mapOx - 3, p0.z * mapK + mapOy - 12, 6, 24); // start/finish
+  const order = new Map((App.board || []).map(r => [r.num, r]));
+  const list = [...KB.Cars.values()].filter(car => car.valid).sort((a, b) => ((order.get(b.num) || {}).pos || 99) - ((order.get(a.num) || {}).pos || 99));
+  c.font = '700 22px "Barlow Condensed"'; c.textBaseline = 'middle';
+  for (const car of list) {
+    const x = car.pos.x * mapK + mapOx, y = car.pos.z * mapK + mapOy, r = order.get(car.num), lead = r && r.pos <= 3, mine = car.num === App.chaseNum;
+    c.beginPath(); c.arc(x, y, mine ? 11 : 8, 0, Math.PI * 2); c.fillStyle = car.color; c.fill();
+    if (mine) { c.lineWidth = 3; c.strokeStyle = '#F2B233'; c.stroke(); }
+    if (lead || mine) { c.fillStyle = '#E9E6DF'; c.fillText(car.tla, x + 14, y); }
+  }
+  c.textBaseline = 'alphabetic';
+  SCR.map.tex.needsUpdate = true;
+}
+function drawWeather() {
+  const c = SCR.weather.cv.getContext('2d'), W = 768, KW = window.KBWeather, d = KW && KW.data ? KW.data() : null, em = KW && KW.emoji ? KW.emoji : () => '';
+  const m = d && d.meeting;
+  header(c, W, m ? `${d.now && d.now.code != null ? em(d.now.code) + ' ' : ''}${m.location}` : 'Weather', d && d.now ? `now ${d.now.temp}°C, wind ${d.now.wind} km/h` : '');
+  if (!m) { c.fillStyle = '#94A1A8'; c.font = '500 28px Barlow'; c.fillText(d && d.error ? 'Forecast unavailable right now.' : 'Loading the forecast…', 24, 140); SCR.weather.tex.needsUpdate = true; return; }
+  const tf = new Intl.DateTimeFormat(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  const list = (d.sessions || []).filter(s => s.end > Date.now()).slice(0, 5);
+  list.forEach((s, i) => {
+    const y = 104 + i * 74, w = s.w;
+    c.font = '44px sans-serif'; c.fillText(w ? em(w.code || 0) : '·', 24, y + 44);
+    c.fillStyle = '#E9E6DF'; c.font = '700 34px "Barlow Condensed"'; c.fillText(s.name, 96, y + 30);
+    c.fillStyle = '#94A1A8'; c.font = '500 24px Barlow'; c.fillText(tf.format(new Date(s.start)) + (w ? ' · ' + w.text : ''), 96, y + 60);
+    c.textAlign = 'right'; c.fillStyle = '#E9E6DF'; c.font = '700 36px "Barlow Condensed"';
+    c.fillText(w ? `${w.temp}°  💧${w.prob}%` : 'soon', W - 24, y + 44); c.textAlign = 'left';
+  });
+  SCR.weather.tex.needsUpdate = true;
+}
+function drawCamLabel(sc, car) {
+  const c = sc.label.cv.getContext('2d'); c.clearRect(0, 0, 512, 56);
+  c.fillStyle = 'rgba(14,18,21,0.85)'; c.fillRect(0, 0, 512, 56);
+  c.fillStyle = teamMat.color.getStyle(); c.fillRect(0, 0, 8, 56);
+  c.font = '700 34px "Barlow Condensed", sans-serif'; c.textBaseline = 'middle'; c.fillStyle = '#E9E6DF';
+  const row = car && (App.board || []).find(r => r.num === car.num);
+  const what = sc.name === 'onboard' ? 'ONBOARD' : 'TV';
+  c.fillText(car ? `${what} · ${row ? 'P' + row.pos + ' ' : ''}${car.tla}` : `${what} · no cars on track`, 22, 30);
+  sc.label.tex.needsUpdate = true;
+}
+const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3();
+function pickCar(which) {
+  const valid = c => c && c.valid;
+  if (which === 'onboard') { const f = App.chaseNum && KB.Cars.get(App.chaseNum); if (valid(f)) return f; }
+  for (const r of App.board || []) { const c = KB.Cars.get(r.num); if (valid(c) && !r.pit) return c; } // TV follows the leader
+  return [...KB.Cars.values()].find(valid) || null;
+}
+function aimCam(sc, dt) {
+  const car = pickCar(sc.name), tr = App.track;
+  if (car !== sc.car) { sc.car = car; sc.init = false; drawCamLabel(sc, car); }
+  if (!car || !tr) return false;
+  const f = vA.set(Math.sin(car.head), 0, Math.cos(car.head));
+  if (sc.name === 'onboard') { // the T-cam view just above and behind the driver's head
+    sc.cam.position.copy(car.pos).addScaledVector(f, -0.6); sc.cam.position.y += 1.25;
+    const ahead = tr.pts[(car.idx + Math.round(40 / (tr.length / tr.N))) % tr.N];
+    vB.copy(car.pos).addScaledVector(f, 40); vB.y = (ahead ? ahead.y : car.pos.y) + 0.6;
+    sc.cam.up.set(0, 1, 0); sc.cam.lookAt(vB);
+  } else { // a helicopter shot hanging off the car's left-rear quarter
+    const side = vB.set(f.z, 0, -f.x);
+    const want = vC.copy(car.pos).addScaledVector(f, -45).addScaledVector(side, 22); want.y = car.pos.y + 26;
+    if (!sc.init) { sc.pos.copy(want); sc.look.copy(car.pos); sc.init = true; }
+    sc.pos.lerp(want, Math.min(1, dt * 1.6)); sc.look.lerp(car.pos, Math.min(1, dt * 5));
+    sc.cam.position.copy(sc.pos); sc.cam.up.set(0, 1, 0); sc.cam.lookAt(sc.look.x, sc.look.y + 1, sc.look.z);
+  }
+  return true;
+}
+let camTurn = 0, camT = [0, 0];
+function renderCams(dt, both) {
+  camT[0] += dt; camT[1] += dt;
+  if ((camTurn = (camTurn + 1) % 3) !== 0) return; // one camera every third frame
+  const k = both ? (camT[0] >= camT[1] ? 0 : 1) : 0, sc = SCR.cam[k], cdt = camT[k]; camT[k] = 0;
+  if (!aimCam(sc, cdt)) return;
+  const xrOn = renderer.xr.enabled, fog = scene.fog, bg = scene.background;
+  renderer.xr.enabled = false; scene.fog = KB.FOG; scene.background = null;
+  renderer.setRenderTarget(sc.rt); renderer.render(scene, sc.cam); renderer.setRenderTarget(null);
+  renderer.xr.enabled = xrOn; scene.fog = fog; scene.background = bg;
+}
+let scrT = 0, slowT = 0;
+function drawScreens(dt) {
+  if ((scrT += dt) > 0.33) { scrT = 0; drawTiming(); drawMap(); for (const sc of SCR.cam) if (sc.car) drawCamLabel(sc, sc.car); }
+  if ((slowT += dt) > 5 || slowT === dt) { slowT = 0.0001; drawWeather(); }
+}
+drawCamLabel(SCR.cam[0], null); drawCamLabel(SCR.cam[1], null);
+
+/* ---------------- Cars on the straight and in the pit lane ---------------- */
+// Every car within reach of the start/finish line is drawn full size: its distance from the line becomes
+// its place along the straight and its sideways offset its line on the track. Cars the timing shows in
+// the pits (or far off the racing line) use the pit lane instead: the fast lane while moving, and the
+// working lane in front of the garages while stopped for their stop.
+const bodyMats = new Map();
+const trafficDark = toon(0x1c1f22);
+function trafficCar(car) {
+  const g = new THREE.Group();
+  let bm = bodyMats.get(car.color); if (!bm) { bm = outsideWindow(toon(car.color)); bodyMats.set(car.color, bm); }
+  g.add(new THREE.Mesh(KB.CarGeo.body, bm), new THREE.Mesh(KB.CarGeo.dark, trafficDark), new THREE.Mesh(KB.CarGeo.post, trafficDark));
+  return { g, color: car.color, x: 0, z: 0, vx: 0, vz: 0, on: false, slow: 0 };
+}
+const TR = new Map();
+outsideWindow(trafficDark);
+function updateTraffic(dt) {
+  const tr = App.track, group = built.traffic;
+  const pits = new Map((App.board || []).map(r => [r.num, !!r.pit]));
+  for (const car of KB.Cars.values()) {
+    let t = TR.get(car.num);
+    if (t && t.color !== car.color) { group.remove(t.g); TR.delete(car.num); t = null; }
+    let show = false;
+    if (tr && car.valid) {
+      const pr = tr.project(car.pos, car.idx), L = tr.length;
+      let rel = pr.s % L; if (rel > L / 2) rel -= L; if (rel < -L / 2) rel += L;
+      if (Math.abs(rel) < HALF) {
+        show = true;
+        if (!t) { t = trafficCar(car); TR.set(car.num, t); group.add(t.g); }
+        const inPit = pits.get(car.num) || Math.abs(pr.lat) > 12;
+        const vx = t.on ? (rel - t.x) / Math.max(dt, 1e-3) : 0;
+        t.slow = Math.abs(vx) < 3 ? Math.min(2, t.slow + dt) : 0; // stopped for a second or more: it's in its box
+        const zWant = inPit ? (t.slow > 1 ? Z.work : Z.fast) : Z.track - Math.max(-6, Math.min(6, pr.lat));
+        if (!t.on) { t.x = rel; t.z = zWant; t.on = true; }
+        const ox = t.x, oz = t.z;
+        t.x = rel; t.z += (zWant - t.z) * Math.min(1, dt * (inPit ? 1.4 : 3));
+        const dx = t.x - ox, dz = t.z - oz;
+        const yaw = Math.abs(dx) + Math.abs(dz) > 0.02 ? Math.atan2(dx, dz) : t.g.rotation.y || Math.PI / 2;
+        t.g.position.set(t.x, inPit || t.z > Z.wall ? 0 : -0.02, t.z); t.g.rotation.y = yaw;
+      }
+    }
+    if (t) { t.g.visible = show; if (!show) t.on = false; }
+  }
+  for (const [num, t] of TR) if (!KB.Cars.has(num)) { group.remove(t.g); TR.delete(num); }
+}
+
+/* ---------------- Going to the pitwall ---------------- */
+// In the headset you jump across the pit lane by shifting where the room's floor is in the scene: every
+// pose the headset reports (head, controllers, hands) is read through an offset space, so friends in a
+// hangout see you standing on the pitwall too. On a flat screen the camera moves there instead.
+let wantAway = false, OFF = null, BASE = null;
+(function patchPoses() {
+  if (typeof XRFrame === 'undefined') return;
+  const P = XRFrame.prototype, swap = s => (OFF && s === BASE ? OFF : s);
+  const gv = P.getViewerPose, gp = P.getPose, gj = P.getJointPose;
+  if (gv) P.getViewerPose = function (s) { return gv.call(this, swap(s)); };
+  if (gp) P.getPose = function (a, s) { return gp.call(this, a, swap(s)); };
+  if (gj) P.getJointPose = function (j, s) { return gj.call(this, j, swap(s)); };
+})();
+const standLocal = new THREE.Vector3(0, STAND.floor, STAND.feetZ), standW = new THREE.Vector3();
+function syncTeleport(show) {
+  const want = wantAway && show && renderer.xr.isPresenting;
+  if (want && !OFF) {
+    const ref = renderer.xr.getReferenceSpace(); if (!ref || typeof XRRigidTransform === 'undefined') return;
+    const head = KB.xrHead(); standW.copy(standLocal); built.G.localToWorld(standW);
+    BASE = ref; OFF = ref.getOffsetReferenceSpace(new XRRigidTransform({ x: head.x - standW.x, y: -standW.y, z: head.z - standW.z }));
+    setTimeout(() => KB.positionPanels(), 150);
+  } else if (!want && OFF) { OFF = null; BASE = null; setTimeout(() => KB.positionPanels(), 150); }
+}
+const look = { yaw: 0, pitch: -0.14, fov: 68 };
+function setAway(on) { wantAway = !!on; look.yaw = 0; look.pitch = -0.14; look.fov = 68; }
+function away() { return wantAway && App.env === 'garage'; }
+function flatCam(camera) { // flat screens: stand on the pitwall and look around
+  if (!built || !built.G.visible || !wantAway || renderer.xr.isPresenting) return;
+  standW.set(0, STAND.floor + 1.62, STAND.feetZ); built.G.localToWorld(standW);
+  camera.position.copy(standW); camera.rotation.set(look.pitch, built.G.rotation.y + look.yaw, 0, 'YXZ');
+  if (camera.fov !== look.fov) { camera.fov = look.fov; camera.updateProjectionMatrix(); }
+}
+function lookBy(dx, dy) { look.yaw += dx * 0.004; look.pitch = Math.max(-1.2, Math.min(1.2, look.pitch + dy * 0.004)); }
+function zoomBy(f) { look.fov = Math.max(20, Math.min(90, look.fov * f)); }
 
 /* ---------------- Window to your real room ---------------- */
 // The window marks its area in the stencil buffer, and the garage simply isn't drawn there, so your real
@@ -214,7 +451,7 @@ function aimStick(dt) { // while aiming: right stick up/down moves the window fa
 const canWindow = () => renderer.xr.isPresenting && App.xrMode === 'immersive-ar';
 
 /* ---------------- Per frame ---------------- */
-let built = null, frozenYaw = null, lastAnchor = new THREE.Vector3(1e9, 0, 0), monT = 0;
+let built = null, frozenYaw = null, lastAnchor = new THREE.Vector3(1e9, 0, 0);
 function shouldShow() {
   if (App.env !== 'garage') return false;
   const driving = window.KBDrive && KBDrive.active;
@@ -235,7 +472,7 @@ function frame(dt) {
         built.G.rotation.y = (frozenYaw ?? App.tableYaw) + (App.garageTurn || 0);
       } else {
         built.G.position.set(0, -0.78, 0); built.G.rotation.y = App.garageTurn || 0;
-        if (KB.orbit.dist > 3.6) KB.orbit.dist = 3.6; // keep the camera inside the garage
+        if (!wantAway && KB.orbit.dist > 3.6) KB.orbit.dist = 3.6; // keep the camera inside the garage
       }
       // stand under the circuit model, sized to it
       const k = 1.1 * (xr ? App.tableScale : 1) * 0.97, topY = xr ? App.anchor.y : 0.75, tr = App.track;
@@ -243,8 +480,11 @@ function frame(dt) {
       built.top.scale.set(wx, 0.05, wz); built.top.position.y = topY - 0.003 - 0.025;
       built.edge.scale.set(wx * 0.92, Math.max(0.05, topY - 0.05), wz * 0.92); built.edge.position.y = (topY - 0.05) / 2;
       built.plinth.rotation.y = App.tableYaw - built.G.rotation.y; // follows the table when you turn it
-      if ((monT += dt) > 0.5) { monT = 0; drawMonitor(built.mon); }
+      drawScreens(dt);
+      updateTraffic(dt);
+      renderCams(dt, wantAway);
     }
+    syncTeleport(show);
   }
   // passthrough window
   const [w, h] = sizeOf();
@@ -260,7 +500,8 @@ function frame(dt) {
   }
   if (!xr && App.placingWindow) App.placingWindow = false;
 }
-function sessionEnded() { win.placed = false; frozenYaw = null; lastAnchor.set(1e9, 0, 0); App.placingWindow = false; }
+function sessionEnded() { win.placed = false; frozenYaw = null; lastAnchor.set(1e9, 0, 0); App.placingWindow = false; OFF = null; BASE = null; }
 
-window.KBGarage = { frame, startWindowPlacing, confirmWindow, canWindow, sessionEnded, setTeamColor, build: GARAGE_BUILD };
+window.KBGarage = { frame, startWindowPlacing, confirmWindow, canWindow, sessionEnded, setTeamColor, setAway, away, flatCam, lookBy, zoomBy, build: GARAGE_BUILD,
+  _dbg: () => ({ TR, built, SCR, OFF, look }) };
 })();

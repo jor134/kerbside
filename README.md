@@ -71,7 +71,7 @@ The Worker saves every circuit's outline ahead of time, so the track still loads
 
 ### Pit garage
 
-Under View → Surroundings, choose **Pit garage** for a fully virtual team garage built around the circuit table, with the pit lane, pit wall and a grandstand out of the open front and a timing monitor on the gantry. On an iPad or phone it's the background behind the table.
+Under View → Surroundings, choose **Pit garage** for a fully virtual team garage built around the circuit table, with a full pit row, pit lane, your team's pitwall stand, the main straight and a grandstand out of the open front. On an iPad or phone it's the background behind the table.
 
 - In the headset, place the table first (you see your real room while placing), then the garage forms around it. Turning the table doesn't turn the garage; **Turn garage** on the headset panel does.
 - Your F1 TV browser window can float anywhere over it, as usual in the Quest browser:
@@ -83,7 +83,10 @@ Under View → Surroundings, choose **Pit garage** for a fully virtual team gara
 
   If F1 TV won't open from inside the headset view, do steps 2 to 4 in the normal browser first, then enter the headset view.
 - **TV window** cuts a window through the garage to your real room, so you can watch your real TV. **Place window**: point at the TV and pull the trigger. **Size** cycles small, medium and large. Needs mixed reality (passthrough).
-- In a hangout, the host's choice of surroundings applies to everyone. The TV window stays personal.
+- **Screens.** The garage video wall shows timing, the track map, an onboard camera and the circuit weather. The pitwall row adds a TV-style helicopter camera. The onboard follows the car you're following; the TV camera follows the leader. These are Kerbside's own views of the 3D circuit: F1 TV's video can't be drawn into the scene.
+- **Pitwall.** Choose **Pitwall ›** on the headset panel (or **On the pitwall** under Surroundings) to jump across the pit lane onto your team's stand; **‹ Back to garage** returns you. On an iPad or phone, drag to look around and pinch to zoom.
+- **Cars.** Every car within about 270 m of the start/finish line drives past full size at its real speed, from the live or replay positions. Cars the timing shows in the pits use the pit lane, and stop in the working lane for their stop, at their real place along the pit lane.
+- In a hangout, the host's choice of surroundings applies to everyone. The TV window and where you stand (garage or pitwall) stay personal; friends see you on the pitwall when you go there.
 
 ### Voice on every network (Cloudflare TURN)
 

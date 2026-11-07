@@ -4,7 +4,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast, renderer = KB.renderer;
-const WEATHER_BUILD = 3;
+const WEATHER_BUILD = 4;
 const TYPES = [
   ['rainSession', 'Rain expected during a session'],
   ['daily', 'Daily forecast on race weekends (8 am)'],
@@ -175,5 +175,5 @@ document.head.appendChild(css);
 render();
 if (/[?&]weather=1/.test(location.search)) { document.body.classList.add('dock-open'); setTimeout(() => { const p = $('#wxPane'); p && p.scrollIntoView({ block: 'start' }); }, 300); }
 
-window.KBWeather = { frame, refresh, headline: () => headline(W.data), build: WEATHER_BUILD };
+window.KBWeather = { frame, refresh, headline: () => headline(W.data), data: () => W.data, emoji: wxEmoji, build: WEATHER_BUILD };
 })();

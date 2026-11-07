@@ -209,6 +209,7 @@ body:not(.board-open) #board{display:none}
     <p class="hint" id="satHint"></p>
     <h3 style="margin-top:14px">Surroundings</h3>
     <div class="seg" id="envSeg"><button data-env="passthrough">My room</button><button data-env="garage">Pit garage</button></div>
+    <div class="seg" id="spotSeg" style="margin-top:8px"><button data-spot="table">In the garage</button><button data-spot="pitwall">On the pitwall</button></div>
     <label class="check" style="margin-top:10px"><input type="checkbox" id="ptWinChk"> Window to my real room (headset)</label>
     <p class="hint" id="envHint">In the pit garage, place your F1 TV browser window wherever you like, or cut a window through to your real TV.</p>
     <details class="howto" id="streamHowto">
@@ -909,7 +910,7 @@ function setDrawTrack(on) {
 function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
 App.env = store.get('env', 'passthrough'); App.ptWindow = store.get('ptWindow', false); App.ptSize = store.get('ptSize', 'M');
 let garageLoading = null;
-const GARAGE_VER = '3';
+const GARAGE_VER = '4';
 function loadGarage() {
   if (window.KBGarage) return Promise.resolve();
   return garageLoading || (garageLoading = new Promise((res, rej) => {
@@ -933,8 +934,14 @@ function setPtWindow(on) {
   if (on && renderer.xr.isPresenting && window.KBGarage && !KBGarage.canWindow()) toast('This headset view has no passthrough, so the window would be black.', 5000);
   refreshEnvUI(); if (renderer.xr.isPresenting) drawXRPanel();
 }
+function setSpot(pitwall) { // in the pit garage: stand at the table, or across the pit lane on the pitwall
+  loadGarage().then(() => { KBGarage.setAway(pitwall); refreshEnvUI(); App.uiDirty = true; if (renderer.xr.isPresenting) drawXRPanel(); })
+    .catch(e => toast('Pit garage: ' + e.message + '.', 6000));
+}
 function refreshEnvUI() {
   document.querySelectorAll('#envSeg button').forEach(b => b.classList.toggle('on', b.dataset.env === App.env));
+  const ss = document.getElementById('spotSeg'), aw = !!(window.KBGarage && KBGarage.away && KBGarage.away());
+  if (ss) { ss.hidden = App.env !== 'garage'; ss.querySelectorAll('button').forEach(b => b.classList.toggle('on', (b.dataset.spot === 'pitwall') === aw)); }
   const c = document.getElementById('ptWinChk'); if (c) { c.checked = App.ptWindow; c.disabled = App.env !== 'garage'; }
   const guest = window.KBHang && KBHang.active() && !KBHang.isHost();
   const h = document.getElementById('envHint');
@@ -1768,6 +1775,7 @@ const orbit = { yaw: 0.5, pitch: 0.9, dist: 1.6, lookYaw: 0, lookPitch: -0.05, t
 // Mouse: left-drag pans, right-drag or Ctrl-drag rotates and tilts, wheel zooms towards the cursor.
 const gRay = new THREE.Raycaster(), gNdc = new THREE.Vector2();
 function mapGesture() { return App.view === 'tabletop' && !renderer.xr.isPresenting; }
+function pitwallLook() { return window.KBGarage && KBGarage.away() && App.view === 'tabletop' && !renderer.xr.isPresenting && !(window.KBDrive && KBDrive.active); }
 function syncCam() { flatCamTick(); camera.updateMatrixWorld(); }
 function groundAt(x, y) {
   gNdc.set(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1);
@@ -1815,6 +1823,11 @@ canvas.addEventListener('pointermove', e => {
   p.x = e.clientX; p.y = e.clientY;
   const after = [...pointers.values()].map(q => ({ x: q.x, y: q.y }));
   const n = after.length;
+  if (pitwallLook()) { // standing on the pitwall: drag looks around, pinch zooms
+    if (n === 1) KBGarage.lookBy(dx, dy);
+    else if (n === 2) { const s0 = spread(before), s1 = spread(after); if (s1.d > 0) KBGarage.zoomBy(s0.d / s1.d); }
+    return;
+  }
 
   if (mapGesture()) {
     if (e.pointerType === 'mouse') {
@@ -1850,6 +1863,7 @@ canvas.addEventListener('wheel', e => {
   e.preventDefault();
   if (window.KBDrive && KBDrive.active && !KBDrive.allowMapGestures()) return;
   const f = Math.exp(e.deltaY * 0.001);
+  if (pitwallLook()) { KBGarage.zoomBy(f); return; }
   if (mapGesture()) { const c = { x: e.clientX, y: e.clientY }; mapMove(c, c, f, 0, 0); }
   else zoom(f);
 }, { passive: false });
@@ -2006,6 +2020,7 @@ function drawXRPanel() {
   if (window.KBWeather) { c.font = '600 24px "Barlow Condensed", sans-serif'; c.fillStyle = '#4F9FD9'; const t = KBWeather.headline(); c.fillText(t.length > 80 ? t.slice(0, 79) + '…' : t, 32, 900); }
   const y5 = 926;
   btn(32, y5, 190, 'Open F1 TV', false, openF1TV);
+  if (App.env === 'garage' && window.KBGarage && KBGarage.setAway) { const aw = KBGarage.away(); btn(UIW - 232, y5, 200, aw ? '‹ Back to garage' : 'Pitwall ›', aw, () => setSpot(!aw)); }
   c.font = '500 19px Barlow, sans-serif'; c.fillStyle = '#94A1A8';
   c.fillText('Sign in, choose Watch live, make the player full screen,', 240, y5 + 26);
   c.fillText('move it to the left window slot, then minimize Kerbside.', 240, y5 + 50);
@@ -2061,7 +2076,7 @@ function positionPanels() {
   if (!renderer.xr.isPresenting) return;
   const head = xrHead();
   const turn = (v, a) => new THREE.Vector3(v.x * Math.cos(a) + v.z * Math.sin(a), 0, -v.x * Math.sin(a) + v.z * Math.cos(a));
-  if (App.view !== 'trackside' && App.placed) {
+  if (App.view !== 'trackside' && App.placed && !(window.KBGarage && KBGarage.away())) { // on the pitwall: panels come with you
     const toUser = new THREE.Vector3(head.x - App.anchor.x, 0, head.z - App.anchor.z).normalize();
     const facing = toUser.clone().negate(), right = new THREE.Vector3(-facing.z, 0, facing.x);
     const off = 0.55 * App.tableScale + 0.42;
@@ -2237,7 +2252,7 @@ function frameBody(time, frame) {
       const fog = scene.fog, cam = App.view === 'top' ? topCam : App.view === 'cockpit' ? cockpitCam : chaseCam; scene.fog = App.view === 'top' ? null : FOG;
       cam.aspect = camera.aspect; cam.updateProjectionMatrix();
       renderer.render(scene, cam); scene.fog = fog;
-    } else renderer.render(scene, camera);
+    } else { if (window.KBGarage) KBGarage.flatCam(camera); renderer.render(scene, camera); }
   }
 }
 
@@ -2347,7 +2362,7 @@ window.KB = {
   uiMesh, chaseMesh, controllers, applyTrackVis, showSource, setEnv, setGhostPost, getSessions: () => sessions
 };
 (function loadWeather() { // circuit weather: menu section, table sign, alerts
-  const sc = document.createElement('script'); sc.src = 'forecast-panel.js?v=3'; sc.async = true; document.head.appendChild(sc);
+  const sc = document.createElement('script'); sc.src = 'forecast-panel.js?v=4'; sc.async = true; document.head.appendChild(sc);
 })();
 const DRIVE_VER = '4'; // bump whenever drive.js changes, so devices don't keep an old copy
 let driveLoading = null;
@@ -2361,6 +2376,7 @@ function loadDrive() {
   }));
 }
 document.querySelectorAll('#envSeg button').forEach(b => b.onclick = () => setEnv(b.dataset.env));
+document.querySelectorAll('#spotSeg button').forEach(b => b.onclick = () => setSpot(b.dataset.spot === 'pitwall'));
 $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
