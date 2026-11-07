@@ -1,7 +1,7 @@
 // Kerbside relay: holds one connection to F1 live timing and fans it out to viewers.
 // Also keeps a shared store of circuit outlines, so every device can draw the track during a live session.
 import { DurableObject } from 'cloudflare:workers';
-import { weatherRequest, weatherRun } from './weather.js';
+import { weatherRequest, weatherRun } from './forecast-worker.js';
 
 const RS = '\x1e';
 const F1_BASE = 'https://livetiming.formula1.com/signalrcore';

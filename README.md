@@ -7,12 +7,12 @@ One GitHub repo, one Cloudflare Worker. The Worker serves the app, runs the F1 l
 ```
 wrangler.toml
 src/worker.js
-src/weather.js
+src/forecast-worker.js
 public/index.html
 public/drive.js
 public/hang.js
 public/garage.js
-public/weather.js
+public/forecast-panel.js
 public/sw.js
 public/manifest.webmanifest
 public/icon-192.png
