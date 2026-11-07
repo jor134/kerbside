@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 5;
+const GARAGE_BUILD = 6;
 
 /* ---------------- Materials ---------------- */
 const toon = c => new THREE.MeshToonMaterial({ color: c });
@@ -202,7 +202,7 @@ function bake(G, keep) {
 function canvasScreen(w, h) { const cv = document.createElement('canvas'); cv.width = w; cv.height = h; return { cv, tex: new THREE.CanvasTexture(cv) }; }
 function camScreen(name) {
   const rt = new THREE.WebGLRenderTarget(640, 360);
-  const cam = new THREE.PerspectiveCamera(name === 'tv' ? 34 : 72, 16 / 9, 0.3, 6000); cam.layers.set(KB.REAL);
+  const cam = new THREE.PerspectiveCamera(name === 'tv' ? 34 : 72, 16 / 9, 0.3, 20000); cam.layers.set(KB.REAL); // far enough for the sky dome (9 km)
   return { name, rt, cam, label: canvasScreen(512, 56), pos: new THREE.Vector3(), look: new THREE.Vector3(), init: false, num: null };
 }
 const SCR = { timing: canvasScreen(768, 480), map: canvasScreen(768, 480), weather: canvasScreen(768, 480), cam: [camScreen('onboard'), camScreen('tv')] };
