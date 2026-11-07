@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 6;
+const GARAGE_BUILD = 7;
 
 /* ---------------- Materials ---------------- */
 const toon = c => new THREE.MeshToonMaterial({ color: c });
@@ -92,8 +92,17 @@ function build() {
   box(G, L, 0.01, 0.12, 0, 0.005, Dfront - 5.0, M.paintWhite); // working lane | fast lane
   box(G, L, 0.01, 0.12, 0, 0.005, Dfront - 9.5, M.paintWhite);
   box(G, L, 1.1, 0.4, 0, 0.55, Z.wall, M.concrete);
-  for (let x = -L / 2 + 1; x <= L / 2; x += 3) box(G, 0.06, 2.4, 0.06, x, 2.3, Z.wall, M.steel);
-  box(G, L, 0.04, 0.04, 0, 3.5, Z.wall, M.steel);
+  // debris fence along the wall; behind your pitwall stand it steps back behind the screens, so no post or
+  // rail sits between you and them
+  const GAP = 4.2, FZ = Z.wall - 0.7;
+  for (let x = -L / 2 + 1; x <= L / 2; x += 3) if (Math.abs(x) > GAP) box(G, 0.06, 2.4, 0.06, x, 2.3, Z.wall, M.steel);
+  for (const sx of [-1, 1]) {
+    const len = L / 2 - GAP; box(G, len, 0.04, 0.04, sx * (GAP + len / 2), 3.5, Z.wall, M.steel);
+    box(G, 0.06, 3.5, 0.06, sx * GAP, 1.75, Z.wall, M.steel); box(G, 0.06, 3.5, 0.06, sx * GAP, 1.75, FZ, M.steel);
+    box(G, 0.04, 0.04, Z.wall - FZ, sx * GAP, 3.5, (Z.wall + FZ) / 2, M.steel);
+  }
+  for (let x = -GAP + 2.1; x < GAP - 0.1; x += 2.1) box(G, 0.06, 3.5, 0.06, x, 1.75, FZ, M.steel);
+  box(G, 2 * GAP, 0.04, 0.04, 0, 3.5, FZ, M.steel);
   box(G, L, 0.2, 14, 0, -0.12, Z.track, M.asphalt); // track surface 2 cm below the pit lane
   for (const z of [Z.track + 6.6, Z.track - 6.6]) box(G, L, 0.01, 0.2, 0, -0.015, z, M.paintWhite); // track edges
   for (let k = 0; k < 28; k++) for (let j = 0; j < 2; j++) box(G, 0.5, 0.01, 0.5, (j - 0.5) * 0.5, -0.014, Z.track - 7 + 0.25 + k * 0.5, (k + j) % 2 ? M.white : M.dark); // chequered start/finish line
