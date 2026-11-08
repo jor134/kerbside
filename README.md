@@ -8,11 +8,13 @@ One GitHub repo, one Cloudflare Worker. The Worker serves the app, runs the F1 l
 wrangler.toml
 src/worker.js
 src/forecast-worker.js
+src/poker.js
 public/index.html
 public/drive.js
 public/hang.js
 public/garage.js
 public/forecast-panel.js
+public/poker.js
 public/sw.js
 public/manifest.webmanifest
 public/icon-192.png
@@ -87,6 +89,22 @@ Under View → Surroundings, choose **Pit garage** for a fully virtual team gara
 - **Pitwall.** Choose **Pitwall ›** on the headset panel (or **On the pitwall** under Surroundings) to jump across the pit lane onto your team's stand; **‹ Back to garage** returns you. On an iPad or phone, drag to look around and pinch to zoom.
 - **Cars.** Every car within about 270 m of the start/finish line drives past full size at its real speed, from the live or replay positions. Cars the timing shows in the pits use the pit lane, and stop in the working lane for their stop, at their real place along the pit lane.
 - In a hangout, the host's choice of surroundings applies to everyone. The TV window and where you stand (garage or pitwall) stay personal; friends see you on the pitwall when you go there.
+
+### Casino and poker
+
+Under Surroundings → Pit garage, choose **Casino** to dress the garage for a night in Vegas: carpet, neon, chandeliers, slot machines and a poker table at the back. In a hangout the host's choice applies to everyone; in the headset it's the **Casino** button on the panel.
+
+**Poker** is no-limit Texas hold'em for up to six friends in a hangout, for chips with **no cash value**. Open it from the hangout card (**♠ Poker and race bets**).
+
+- Everyone starts with 10,000 chips. Your stack is saved on your relay and follows you from race to race. If you run out, **Top up** brings you back to 10,000 (the leaderboard counts top-ups). Blinds are 50/100.
+- You have 40 seconds to act; after that you check if you can, otherwise you fold and sit out until you press **I'm back**. If you drop out of the hangout you keep your seat for 45 seconds.
+- **iPad, phone and computer:** the poker panel shows the table, your cards and the buttons. In the casino garage you also sit at the 3D table: drag to look around.
+- **Headset:** when you sit down you're moved to your chair at the table.
+  - Pick up your cards (pinch, or grip button) to look at them; throw them into the middle to fold.
+  - Take chips from the three trays in front of you (100, 500 and 1,000) and drop them in the gold circle; knock on the felt (a quick tap, down and up) to bet or call what's in the circle. Knock with nothing in the circle to check.
+  - The action bar over the felt has the same buttons, for pointing and clicking.
+
+**Race bets** are pool bets on the race: everything staked is shared by whoever picked the winner, in proportion to their stake, and if nobody picked it everyone gets their stake back. The host opens them (**Next to pit**, **Leader in 3 laps**, **Safety car in the next 10 laps?**); betting stays open for a minute. The host's app settles them from the race on the host's screen, at the host's broadcast delay, so pick a host who's watching. The host can also call a bet off.
 
 ### Voice on every network (Cloudflare TURN)
 

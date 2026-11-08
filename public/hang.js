@@ -5,7 +5,7 @@
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const renderer = KB.renderer;
-const HANG_BUILD = 3;
+const HANG_BUILD = 4;
 const COLORS = ['#D2342B', '#F28A1E', '#E8C33A', '#2F8F4E', '#2BB5A0', '#2E6FD9', '#8E5BD6', '#E66BB0', '#C9CED3', '#F2F2EF'];
 
 const me = Object.assign({ name: '', color: COLORS[Math.floor(Math.random() * COLORS.length)], follow: true }, store.get('hang:me', {}));
@@ -16,6 +16,8 @@ const H = {
   lastPose: 0, lastWatch: 0, watchSig: '', needTap: false
 };
 const isHost = () => H.id != null && H.id === H.host;
+// A random id that stays on this device: it keeps your poker chips between races.
+const pid = (() => { let p = store.get('kb:pid', ''); if (!/^[\w-]{8,40}$/.test(p)) { p = 'p-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36); store.set('kb:pid', p); } return p; })();
 const myName = () => (me.name || '').trim().slice(0, 16) || 'Friend';
 const device = () => renderer.xr.isPresenting ? 'xr' : 'screen';
 
@@ -69,13 +71,15 @@ function leave(quiet) {
   if (!quiet) UI.render();
 }
 function send(m) { if (H.ws && H.ws.readyState === 1) H.ws.send(JSON.stringify(m)); }
-function sendHello() { if (window.KBGarage) KBGarage.setTeamColor(me.color); send({ t: 'hello', name: myName(), color: me.color, device: device(), muted: H.muted || !H.mic }); }
+function sendHello() { if (window.KBGarage) KBGarage.setTeamColor(me.color); send({ t: 'hello', name: myName(), color: me.color, device: device(), muted: H.muted || !H.mic, pid }); }
 
 function onMsg(m) {
   if (m.t === 'welcome') {
     H.id = m.you; H.host = m.host; H.peers = m.peers || [];
     if (m.watch) applyWatch(m.watch);
     if (m.env && !isHost()) KB.setEnv(m.env, { fromHost: true });
+    if (m.look && !isHost()) KB.setLook(m.look, { fromHost: true });
+    if (window.KBLoadPoker) KBLoadPoker();
     syncPeers(); UI.render();
     if (isHost()) { publishWatch(true); publishEnv(App.env); }
   } else if (m.t === 'roster') {
@@ -94,7 +98,14 @@ function onMsg(m) {
   } else if (m.t === 'watch') {
     applyWatch(m.w);
   } else if (m.t === 'env') {
-    if (!isHost() && m.env) { KB.setEnv(m.env, { fromHost: true }); toast(m.env === 'garage' ? 'The host moved everyone into the pit garage.' : 'The host switched everyone to their own rooms.', 4000); }
+    if (!isHost() && m.env) {
+      const was = App.env, wasLook = App.garageLook;
+      KB.setEnv(m.env, { fromHost: true }); if (m.look) KB.setLook(m.look, { fromHost: true });
+      if (was !== App.env) toast(m.env === 'garage' ? 'The host moved everyone into the pit garage.' : 'The host switched everyone to their own rooms.', 4000);
+      else if (wasLook !== App.garageLook) toast(App.garageLook === 'casino' ? 'The host opened the casino.' : 'The host switched back to the team garage.', 4000);
+    }
+  } else if (m.t === 'pk') {
+    if (window.KBPoker) KBPoker.onMsg(m);
   } else if (m.t === 'full') {
     toast('That room is full (10 people).', 6000); leave();
   }
@@ -254,7 +265,7 @@ async function applyWatch(w) {
   }
 }
 
-function publishEnv(env) { if (isHost()) send({ t: 'env', env }); }
+function publishEnv(env) { if (isHost()) send({ t: 'env', env, look: App.garageLook || 'team' }); }
 
 /* ---------------- Avatars ---------------- */
 // Positions are shared relative to each person's table (metres from its centre, turned with it),
@@ -575,6 +586,7 @@ const UI = {
         return `<li><span class="sw" style="background:${p.color}"></span><span>${escapeHtml(p.name)}${mine ? ' (you)' : ''}${p.id === H.host ? ' · host' : ''}<span class="dot ${muted ? 'mute' : ''}" data-dot="${p.id}"></span></span><span class="st">${p.device === 'xr' ? 'headset' : 'screen'}${st === 'connecting' ? ' · connecting' : st === 'failed' ? ' · no voice' : ''}</span></li>`;
       }).join('')}</ul>`;
       h += `<div class="row"><button class="b ${H.muted ? 'on' : ''}" data-act="mute">${H.muted ? 'Unmute' : 'Mute'}</button><button class="b" data-act="invite">Invite</button><button class="b" data-act="leave">Leave</button></div>`;
+      h += `<div class="row"><button class="b" data-act="poker">♠ Poker and race bets</button></div>`;
       if (!isHost()) h += `<label class="chk"><input type="checkbox" data-act="follow" ${me.follow ? 'checked' : ''}> Follow what the host watches</label>`;
     }
     h += `<p class="sub" style="margin-top:8px">Hangout build ${HANG_BUILD}</p>`;
@@ -583,6 +595,7 @@ const UI = {
   },
   async act(a, b) {
     if (a === 'close') this.show(false);
+    else if (a === 'poker') { if (window.KBLoadPoker) KBLoadPoker().then(() => KBPoker.open()).catch(e => toast('Poker: ' + e.message + '.', 6000)); }
     else if (a === 'color') { me.color = b.dataset.c; saveMe(); this.render(); }
     else if (a === 'create') {
       const nm = $('#hName'); if (nm) { me.name = nm.value.trim(); saveMe(); }
@@ -649,7 +662,7 @@ function frame(dt, xrFrame) {
 /* ---------------- Public ---------------- */
 const Hang = {
   open(prefill) { UI.build(); if (prefill) H.pending = String(prefill).toUpperCase(); UI.show(true); },
-  join, leave, frame, onSelect, publishEnv,
+  join, leave, frame, onSelect, publishEnv, send, pid: () => pid, myId: () => H.id,
   active() { return H.joined; },
   isHost,
   _H: H

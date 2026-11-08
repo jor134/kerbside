@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 7;
+const GARAGE_BUILD = 8;
 
 /* ---------------- Materials ---------------- */
 const toon = c => new THREE.MeshToonMaterial({ color: c });
@@ -17,7 +17,8 @@ const M = {
   floor: toon(0xb7bcc0), line: paint(0xe8c33a), white: toon(0xeeeeea), paintWhite: paint(0xeeeeea), wall: toon(0x353d43), back: toon(0x2a3136),
   ceil: toon(0x22282c), steel: toon(0x6f7a82), dark: toon(0x1c1f22), rubber: toon(0x17191b), asphalt: toon(0x3b4349),
   grass: toon(0x5b8a4e), concrete: toon(0x9aa1a6), stand: toon(0x7d8c99), roof: toon(0xeef0f1),
-  glow: new THREE.MeshBasicMaterial({ color: 0xf4f6f8 }), screenOff: new THREE.MeshBasicMaterial({ color: 0x0e1215 })
+  glow: new THREE.MeshBasicMaterial({ color: 0xf4f6f8 }), screenOff: new THREE.MeshBasicMaterial({ color: 0x0e1215 }),
+  inWall: toon(0x353d43), inBack: toon(0x2a3136) // your own garage's walls, so the casino look doesn't repaint the whole pit row
 };
 let teamMat = toon(0xd2342b);
 const garageDark = toon(0x1c1f22);
@@ -27,7 +28,8 @@ function outsideWindow(mat) { // don't draw this where the window is
   mat.stencilFail = mat.stencilZFail = mat.stencilZPass = THREE.KeepStencilOp;
   return mat;
 }
-function setTeamColor(hex) { teamMat.color.set(hex || '#D2342B'); }
+let teamHex = '#D2342B';
+function setTeamColor(hex) { teamHex = hex || '#D2342B'; if (look_ !== 'casino') teamMat.color.set(teamHex); }
 
 /* ---------------- Building it ---------------- */
 // Local frame: floor at y = 0, the table at the origin, +z towards where you stood when you placed the table,
@@ -52,10 +54,10 @@ function build() {
   for (const x of [-3.6, 3.6]) box(G, 0.08, 0.01, Dback - Dfront - 0.6, x, 0.005, (Dback + Dfront) / 2, M.line);
   box(G, W - 0.6, 0.01, 0.1, 0, 0.005, Dfront + 0.4, M.paintWhite);
   // walls and ceiling (boxes, so they look solid from either side)
-  box(G, W, Ht, 0.2, 0, Ht / 2, Dback, M.back);
+  box(G, W, Ht, 0.2, 0, Ht / 2, Dback, M.inBack);
   box(G, W, 0.3, 0.22, 0, 2.45, Dback - 0.02, teamMat); // team stripe
   for (const sx of [-1, 1]) {
-    box(G, 0.2, Ht, Dback - Dfront, sx * W / 2, Ht / 2, (Dback + Dfront) / 2, M.wall);
+    box(G, 0.2, Ht, Dback - Dfront, sx * W / 2, Ht / 2, (Dback + Dfront) / 2, M.inWall);
     box(G, 0.22, 0.3, Dback - Dfront, sx * (W / 2 - 0.02), 2.45, (Dback + Dfront) / 2, teamMat);
     for (let z = Dfront + 1; z < Dback; z += 2) box(G, 0.22, Ht, 0.04, sx * (W / 2 - 0.03), Ht / 2, z, M.dark); // panel seams
   }
@@ -175,8 +177,9 @@ function build() {
   screen(SCR.weather.tex, PW, PH, 2.8, PY, PZ, T);
   const traffic = new THREE.Group(); G.add(traffic); keep.add(traffic);
   bake(G, keep);
+  const casino = buildCasino(); G.add(casino.group); // added after baking: it's switched on and off
   G.traverse(o => { if (o.material) [].concat(o.material).forEach(outsideWindow); });
-  return { G, plinth, top, edge, traffic };
+  return { G, plinth, top, edge, traffic, casino };
 }
 
 // Merge the garage's ~130 fixed pieces into one mesh per material: a handful of draw calls per eye
@@ -203,6 +206,94 @@ function bake(G, keep) {
     }
     for (const m of drop) G.remove(m);
   } catch (e) { /* if merging fails, the separate pieces still draw */ }
+}
+
+/* ---------------- Casino look ---------------- */
+// Same garage, dressed for a night in Vegas: patterned carpet, burgundy walls, gold trim, neon, chandeliers,
+// slot machines and a poker table at the back. The host's choice applies to everyone in a hangout.
+const POKER = { x: -1.0, z: 3.0, top: 0.78, rx: 1.15, rz: 0.68 }; // poker table centre, felt height and size
+const CASINO = { inWall: 0x4a1420, inBack: 0x3a0f19, ceil: 0x1a0d10, glow: 0xffd27a, team: 0xc9a13b };
+const SAVED = { inWall: 0x353d43, inBack: 0x2a3136, ceil: 0x22282c, glow: 0xf4f6f8 };
+let look_ = 'team';
+function canvasTex(w, h, draw, repeat) { const cv = document.createElement('canvas'); cv.width = w; cv.height = h; draw(cv.getContext('2d'), w, h); const t = new THREE.CanvasTexture(cv); if (repeat) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat[0], repeat[1]); } return t; }
+function neonText(text, color, w, h) {
+  return canvasTex(w, h, (c) => {
+    c.font = `800 ${Math.round(h * 0.62)}px "Barlow Condensed", sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle';
+    for (const [blur, a] of [[h * 0.3, 0.55], [h * 0.12, 0.8], [0, 1]]) { c.shadowColor = color; c.shadowBlur = blur; c.globalAlpha = a; c.fillStyle = blur ? color : '#fff6fb'; c.fillText(text, w / 2, h / 2); }
+  });
+}
+function buildCasino() {
+  const g = new THREE.Group(); g.name = 'casino'; g.visible = false;
+  const gold = toon(0xc9a13b), felt = toon(0x0f6b3a), wood = toon(0x4a2516), red = toon(0x9e1b2c), black = toon(0x141012);
+  // carpet
+  const carpet = canvasTex(256, 256, (c, w) => {
+    c.fillStyle = '#5a0f1c'; c.fillRect(0, 0, w, w);
+    c.strokeStyle = '#c9a13b'; c.lineWidth = 6; c.beginPath(); c.moveTo(w / 2, 8); c.lineTo(w - 8, w / 2); c.lineTo(w / 2, w - 8); c.lineTo(8, w / 2); c.closePath(); c.stroke();
+    c.fillStyle = '#1b6f6a'; c.beginPath(); c.arc(w / 2, w / 2, 34, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#e8c33a'; for (const [x, y] of [[0, 0], [w, 0], [0, w], [w, w]]) { c.beginPath(); c.arc(x, y, 22, 0, Math.PI * 2); c.fill(); }
+  }, [W / 1.4, (Dback - Dfront) / 1.4]);
+  const cm = new THREE.Mesh(new THREE.PlaneGeometry(W - 0.2, Dback - Dfront - 0.5), new THREE.MeshLambertMaterial({ map: carpet }));
+  cm.rotation.x = -Math.PI / 2; cm.position.set(0, 0.012, (Dback + Dfront) / 2 + 0.2); g.add(cm);
+  // neon: sign on the back wall, tubes along the walls, sign over the entrance outside
+  const sign = (tex, w, h, x, y, z, ry) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })); m.position.set(x, y, z); if (ry) m.rotation.y = ry; g.add(m); return m; };
+  sign(neonText('KERBSIDE CASINO', '#ff3fa4', 1024, 160), 4.6, 0.72, 0, 3.35, Dback - 0.13);
+  sign(neonText('POKER', '#3ff4ff', 512, 128), 1.5, 0.38, POKER.x, 2.75, Dback - 0.13);
+  sign(neonText('CASINO', '#ffd23f', 768, 160), 3.6, 0.75, 0, Ht - 0.45, Dfront - 0.2, Math.PI);
+  const pink = new THREE.MeshBasicMaterial({ color: 0xff3fa4 }), cyan = new THREE.MeshBasicMaterial({ color: 0x3ff4ff });
+  for (const sx of [-1, 1]) { box(g, 0.04, 0.04, Dback - Dfront - 0.6, sx * (W / 2 - 0.12), 4.2, (Dback + Dfront) / 2, pink); box(g, 0.03, 0.03, Dback - Dfront - 0.6, sx * (W / 2 - 0.12), 0.12, (Dback + Dfront) / 2, cyan); }
+  box(g, W - 0.4, 0.04, 0.04, 0, 4.2, Dback - 0.12, pink);
+  // gold trim on the walls
+  for (const sx of [-1, 1]) box(g, 0.03, 0.06, Dback - Dfront - 0.4, sx * (W / 2 - 0.11), 1.1, (Dback + Dfront) / 2, gold);
+  box(g, W - 0.3, 0.06, 0.03, 0, 1.1, Dback - 0.11, gold);
+  // chandeliers
+  const crystal = new THREE.MeshBasicMaterial({ color: 0xfff4d6 }), cg = new THREE.OctahedronGeometry(0.05);
+  for (const [x, z] of [[POKER.x, POKER.z], [1.6, -0.6]]) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.025, 6, 28), gold); ring.rotation.x = Math.PI / 2; ring.position.set(x, 3.7, z); g.add(ring);
+    box(g, 0.02, Ht - 3.7, 0.02, x, (Ht + 3.7) / 2, z, gold);
+    for (let k = 0; k < 14; k++) { const a = k / 14 * Math.PI * 2, c = new THREE.Mesh(cg, crystal); c.position.set(x + Math.cos(a) * 0.45, 3.58 - (k % 2) * 0.08, z + Math.sin(a) * 0.45); c.scale.y = 1.8; g.add(c); }
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 8), crystal); bulb.position.set(x, 3.55, z); g.add(bulb);
+  }
+  // slot machines against the back wall
+  const reels = canvasTex(256, 128, (c, w, h) => {
+    c.fillStyle = '#fffbea'; c.fillRect(0, 0, w, h); c.font = '800 64px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    ['7', '🏁', '7'].forEach((t, i) => { c.fillStyle = i === 1 ? '#111' : '#d2342b'; c.fillText(t, w * (i + 0.5) / 3, h / 2); });
+    c.strokeStyle = '#c9a13b'; c.lineWidth = 6; for (let i = 1; i < 3; i++) { c.beginPath(); c.moveTo(w * i / 3, 0); c.lineTo(w * i / 3, h); c.stroke(); }
+  });
+  for (const x of [1.9, 2.75]) {
+    box(g, 0.66, 1.0, 0.55, x, 0.5, Dback - 0.42, red); box(g, 0.66, 0.7, 0.45, x, 1.35, Dback - 0.47, black); box(g, 0.7, 0.18, 0.58, x, 1.79, Dback - 0.43, gold);
+    const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.52, 0.26), new THREE.MeshBasicMaterial({ map: reels })); scr.position.set(x, 1.38, Dback - 0.24); g.add(scr);
+    cyl(g, 0.02, 0.4, x + 0.37, 1.2, Dback - 0.42, gold); const knob = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), red); knob.position.set(x + 0.37, 1.42, Dback - 0.42); g.add(knob);
+    box(g, 0.66, 0.05, 0.2, x, 0.98, Dback - 0.2, gold);
+  }
+  // the poker table: wooden base, padded rail, green felt, and six chairs
+  const ell = (rx, rz, h, y, mat, seg = 48) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, h, seg), mat); m.scale.set(rx, 1, rz); m.position.set(POKER.x, y, POKER.z); g.add(m); return m; };
+  ell(0.35, 0.22, POKER.top - 0.1, (POKER.top - 0.1) / 2, wood, 20);
+  ell(POKER.rx + 0.16, POKER.rz + 0.16, 0.1, POKER.top - 0.05, black);
+  ell(POKER.rx, POKER.rz, 0.02, POKER.top - 0.005, felt);
+  const railT = new THREE.Mesh(new THREE.TorusGeometry(1, 0.06, 8, 48), black); railT.rotation.x = Math.PI / 2; railT.scale.set(POKER.rx + 0.1, POKER.rz + 0.1, 1); railT.position.set(POKER.x, POKER.top + 0.01, POKER.z); g.add(railT);
+  const feltLine = new THREE.Mesh(new THREE.TorusGeometry(1, 0.006, 4, 48), gold); feltLine.rotation.x = Math.PI / 2; feltLine.scale.set(POKER.rx * 0.62, POKER.rz * 0.55, 1); feltLine.position.set(POKER.x, POKER.top + 0.006, POKER.z); g.add(feltLine);
+  for (let i = 0; i < 6; i++) {
+    const s = seatSpot(i, 1.75, 1.25), ry = s.yaw;
+    const ch = new THREE.Group(); ch.position.set(s.x, 0, s.z); ch.rotation.y = ry; g.add(ch);
+    box(ch, 0.48, 0.1, 0.46, 0, 0.48, 0, red); box(ch, 0.48, 0.55, 0.08, 0, 0.8, -0.23, red); box(ch, 0.5, 0.04, 0.5, 0, 0.42, 0, gold);
+    for (const [dx, dz] of [[-0.2, -0.2], [0.2, -0.2], [-0.2, 0.2], [0.2, 0.2]]) box(ch, 0.04, 0.42, 0.04, dx, 0.21, dz, gold);
+  }
+  const anchor = new THREE.Group(); anchor.position.set(POKER.x, POKER.top + 0.004, POKER.z); g.add(anchor); // poker.js puts cards and chips here
+  return { group: g, anchor };
+}
+// Seat i around the poker table (0 nearest the circuit table, then clockwise seen from above), at
+// distance (rx, rz) from the centre, facing the middle of the table.
+function seatSpot(i, rx, rz) {
+  const a = Math.PI - i * Math.PI / 3, x = POKER.x + rx * Math.sin(a), z = POKER.z + rz * Math.cos(a); // clockwise: seat 1 is on seat 0's left
+  return { x, z, yaw: Math.atan2(POKER.x - x, POKER.z - z) };
+}
+function setLook(l) {
+  look_ = l === 'casino' ? 'casino' : 'team';
+  const C = look_ === 'casino' ? CASINO : SAVED;
+  M.inWall.color.setHex(C.inWall); M.inBack.color.setHex(C.inBack); M.ceil.color.setHex(C.ceil); M.glow.color.setHex(C.glow);
+  teamMat.color.set(look_ === 'casino' ? CASINO.team : teamHex);
+  if (built) built.casino.group.visible = look_ === 'casino';
+  if (look_ !== 'casino' && spot && spot.seat != null) setSpot(null);
 }
 
 /* ---------------- Screens ---------------- */
@@ -388,7 +479,9 @@ function updateTraffic(dt) {
 // In the headset you jump across the pit lane by shifting where the room's floor is in the scene: every
 // pose the headset reports (head, controllers, hands) is read through an offset space, so friends in a
 // hangout see you standing on the pitwall too. On a flat screen the camera moves there instead.
-let wantAway = false, OFF = null, BASE = null;
+// spot: null (at the circuit table), or where to stand: { pos: local feet position, yaw: local facing (or
+// null to keep the way you're facing), eye: flat-screen eye height, seat: poker seat number }
+let spot = null, OFF = null, BASE = null, offFor = null;
 (function patchPoses() {
   if (typeof XRFrame === 'undefined') return;
   const P = XRFrame.prototype, swap = s => (OFF && s === BASE ? OFF : s);
@@ -397,23 +490,40 @@ let wantAway = false, OFF = null, BASE = null;
   if (gp) P.getPose = function (a, s) { return gp.call(this, a, swap(s)); };
   if (gj) P.getJointPose = function (j, s) { return gj.call(this, j, swap(s)); };
 })();
-const standLocal = new THREE.Vector3(0, STAND.floor, STAND.feetZ), standW = new THREE.Vector3();
+const standW = new THREE.Vector3();
+const yawOf = v => Math.atan2(v.x, v.z);
 function syncTeleport(show) {
-  const want = wantAway && show && renderer.xr.isPresenting;
+  const want = spot && show && renderer.xr.isPresenting ? spot : null;
+  if (OFF && offFor !== want) { OFF = null; BASE = null; offFor = null; if (!want) setTimeout(() => KB.positionPanels(), 150); }
   if (want && !OFF) {
     const ref = renderer.xr.getReferenceSpace(); if (!ref || typeof XRRigidTransform === 'undefined') return;
-    const head = KB.xrHead(); standW.copy(standLocal); built.G.localToWorld(standW);
-    BASE = ref; OFF = ref.getOffsetReferenceSpace(new XRRigidTransform({ x: head.x - standW.x, y: -standW.y, z: head.z - standW.z }));
+    const head = KB.xrHead(); standW.copy(want.pos); built.G.localToWorld(standW);
+    // turn the room so that the way you're facing now becomes the way the spot faces
+    const th = want.yaw == null ? 0 : yawOf(KB.xrForward()) - (want.yaw + built.G.rotation.y);
+    const c = Math.cos(th), s = Math.sin(th);
+    const rx = standW.x * c + standW.z * s, rz = -standW.x * s + standW.z * c;
+    BASE = ref; offFor = want;
+    OFF = ref.getOffsetReferenceSpace(new XRRigidTransform({ x: head.x - rx, y: -standW.y, z: head.z - rz }, { x: 0, y: Math.sin(th / 2), z: 0, w: Math.cos(th / 2) }));
     setTimeout(() => KB.positionPanels(), 150);
-  } else if (!want && OFF) { OFF = null; BASE = null; setTimeout(() => KB.positionPanels(), 150); }
+  }
 }
+const PITWALL = { pos: new THREE.Vector3(0, STAND.floor, STAND.feetZ), yaw: null, eye: 1.62, pitch: -0.14 };
 const look = { yaw: 0, pitch: -0.14, fov: 68 };
-function setAway(on) { wantAway = !!on; look.yaw = 0; look.pitch = -0.14; look.fov = 68; }
-function away() { return wantAway && App.env === 'garage'; }
-function flatCam(camera) { // flat screens: stand on the pitwall and look around
-  if (!built || !built.G.visible || !wantAway || renderer.xr.isPresenting) return;
-  standW.set(0, STAND.floor + 1.62, STAND.feetZ); built.G.localToWorld(standW);
-  camera.position.copy(standW); camera.rotation.set(look.pitch, built.G.rotation.y + look.yaw, 0, 'YXZ');
+function setSpot(sp) { spot = sp; look.yaw = sp && sp.yaw != null ? sp.yaw : 0; look.pitch = sp ? sp.pitch : -0.14; look.fov = 68; }
+function setAway(on) { setSpot(on ? PITWALL : null); }
+function away() { return !!spot && App.env === 'garage'; }
+function atPitwall() { return spot === PITWALL && App.env === 'garage'; }
+// Poker seats: you stand at the rail (headset) or look on from your chair (flat screen).
+function seatAt(i) {
+  if (i == null || i < 0) { if (spot && spot.seat != null) setSpot(null); return; }
+  const f = seatSpot(i, POKER.rx + 0.42, POKER.rz + 0.42);
+  setSpot({ pos: new THREE.Vector3(f.x, 0, f.z), yaw: f.yaw, eye: 1.25, pitch: -0.62, seat: i });
+}
+function flatCam(camera) { // flat screens: stand on the pitwall, or sit at the poker table, and look around
+  if (!built || !built.G.visible || !spot || renderer.xr.isPresenting) return;
+  const back = spot.seat != null ? 0.35 : 0; // a little behind your chair, so you see your own cards
+  standW.set(spot.pos.x - Math.sin(look.yaw) * back, spot.pos.y + spot.eye, spot.pos.z - Math.cos(look.yaw) * back); built.G.localToWorld(standW);
+  camera.position.copy(standW); camera.rotation.set(look.pitch, built.G.rotation.y + look.yaw + (spot.yaw == null ? 0 : Math.PI), 0, 'YXZ');
   if (camera.fov !== look.fov) { camera.fov = look.fov; camera.updateProjectionMatrix(); }
 }
 function lookBy(dx, dy) { look.yaw += dx * 0.004; look.pitch = Math.max(-1.2, Math.min(1.2, look.pitch + dy * 0.004)); }
@@ -475,7 +585,7 @@ function shouldShow() {
 }
 function frame(dt) {
   const show = shouldShow();
-  if (show && !built) { built = build(); scene.add(built.G); }
+  if (show && !built) { built = build(); scene.add(built.G); setLook(look_); }
   const xr = renderer.xr.isPresenting;
   if (built) {
     built.G.visible = show;
@@ -486,7 +596,7 @@ function frame(dt) {
         built.G.rotation.y = (frozenYaw ?? App.tableYaw) + (App.garageTurn || 0);
       } else {
         built.G.position.set(0, -0.78, 0); built.G.rotation.y = App.garageTurn || 0;
-        if (!wantAway && KB.orbit.dist > 3.6) KB.orbit.dist = 3.6; // keep the camera inside the garage
+        if (!spot && KB.orbit.dist > 3.6) KB.orbit.dist = 3.6; // keep the camera inside the garage
       }
       // stand under the circuit model, sized to it
       const k = 1.1 * (xr ? App.tableScale : 1) * 0.97, topY = xr ? App.anchor.y : 0.75, tr = App.track;
@@ -496,7 +606,7 @@ function frame(dt) {
       built.plinth.rotation.y = App.tableYaw - built.G.rotation.y; // follows the table when you turn it
       drawScreens(dt);
       updateTraffic(dt);
-      renderCams(dt, wantAway);
+      renderCams(dt, atPitwall());
     }
     syncTeleport(show);
   }
@@ -514,8 +624,10 @@ function frame(dt) {
   }
   if (!xr && App.placingWindow) App.placingWindow = false;
 }
-function sessionEnded() { win.placed = false; frozenYaw = null; lastAnchor.set(1e9, 0, 0); App.placingWindow = false; OFF = null; BASE = null; }
+function sessionEnded() { win.placed = false; frozenYaw = null; lastAnchor.set(1e9, 0, 0); App.placingWindow = false; OFF = null; BASE = null; offFor = null; }
 
-window.KBGarage = { frame, startWindowPlacing, confirmWindow, canWindow, sessionEnded, setTeamColor, setAway, away, flatCam, lookBy, zoomBy, build: GARAGE_BUILD,
-  _dbg: () => ({ TR, built, SCR, OFF, look }) };
+window.KBGarage = { frame, startWindowPlacing, confirmWindow, canWindow, sessionEnded, setTeamColor, setAway, away, atPitwall, flatCam, lookBy, zoomBy, build: GARAGE_BUILD,
+  setLook, look: () => look_, seatAt, seated: () => spot && spot.seat != null ? spot.seat : -1,
+  pokerAnchor: () => built && built.casino.anchor, pokerGeo: POKER, seatSpot, stencil: outsideWindow,
+  _dbg: () => ({ TR, built, SCR, OFF, look, spot }) };
 })();

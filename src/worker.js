@@ -2,6 +2,7 @@
 // Also keeps a shared store of circuit outlines, so every device can draw the track during a live session.
 import { DurableObject } from 'cloudflare:workers';
 import { weatherRequest, weatherRun } from './forecast-worker.js';
+import { PokerTable, SideBets, START, BLINDS } from './poker.js';
 
 const RS = '\x1e';
 const F1_BASE = 'https://livetiming.formula1.com/signalrcore';
@@ -310,6 +311,30 @@ export class F1Relay extends DurableObject {
     return pts ? new Response(JSON.stringify(pts)) : new Response('{"error":"not found"}', { status: 404 });
   }
 
+  // Poker chip balances, one record per player id, shared by every hangout room on this relay.
+  // { get: [pid], set: { pid: { bal, name, rebuys } }, top: n } -> { get: { pid: rec }, top: [rec] }
+  async chipsRequest(request) {
+    let q; try { q = await request.json(); } catch (e) { return Response.json({ error: 'bad json' }, { status: 400 }); }
+    const out = {}, st = this.ctx.storage;
+    if (q.set && typeof q.set === 'object') {
+      for (const [pid, r] of Object.entries(q.set).slice(0, 50)) {
+        if (!/^[\w-]{8,40}$/.test(pid) || !r) continue;
+        const old = (await st.get('chip:' + pid)) || { bal: START, rebuys: 0, best: START };
+        const bal = Math.max(0, Math.floor(+r.bal || 0));
+        await st.put('chip:' + pid, { pid, bal, name: String(r.name || old.name || 'Friend').slice(0, 16), rebuys: Math.max(0, Math.floor(r.rebuys != null ? +r.rebuys : old.rebuys || 0)), best: Math.max(old.best || 0, bal), at: Date.now() });
+      }
+    }
+    if (Array.isArray(q.get)) {
+      out.get = {};
+      for (const pid of q.get.slice(0, 20)) if (/^[\w-]{8,40}$/.test(pid)) out.get[pid] = (await st.get('chip:' + pid)) || null;
+    }
+    if (q.top) {
+      const all = [...(await st.list({ prefix: 'chip:' })).values()];
+      out.top = all.sort((a, b) => b.bal - a.bal).slice(0, Math.min(20, +q.top || 10)).map(r => ({ name: r.name, bal: r.bal, best: r.best, rebuys: r.rebuys }));
+    }
+    return Response.json(out);
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === '/status') return Response.json(this.statusObj());
@@ -324,6 +349,7 @@ export class F1Relay extends DurableObject {
     if (url.pathname === '/fill') {
       try { return Response.json(await this.fillTracks()); } catch (e) { return Response.json({ error: String(e.message || e) }, { status: 500 }); }
     }
+    if (url.pathname === '/chips' && request.method === 'POST') return this.chipsRequest(request); // poker chips, called by hangout rooms only
 
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
@@ -567,6 +593,114 @@ export class HangRoom extends DurableObject {
     this.nextId = 1;
     this.host = null;
     this.watch = null;
+    // poker and race side bets: the room owns the cards and the chips in play
+    this.table = new PokerTable(); this.bets = new SideBets();
+    this.wallet = new Map(); // pid -> { bal, rebuys, name, loaded }
+    this.dirty = new Set(); this.saveT = null; this.tickT = null; this.graceT = new Map();
+    this.relayStub = env.RELAY.get(env.RELAY.idFromName('live'));
+  }
+  async chips(q) { const r = await this.relayStub.fetch('https://relay/chips', { method: 'POST', body: JSON.stringify(q) }); return r.json(); }
+  bal(pid) { const i = this.table.seatOf(pid); return i >= 0 ? this.table.seats[i].stack : (this.wallet.get(pid) || {}).bal || 0; }
+  credit(pid, amt) {
+    const i = this.table.seatOf(pid);
+    if (i >= 0) this.table.seats[i].stack += amt; else { const w = this.wallet.get(pid); if (w) w.bal += amt; }
+    this.markDirty(pid);
+  }
+  markDirty(pid) { this.dirty.add(pid); clearTimeout(this.saveT); this.saveT = setTimeout(() => this.flush(), 1500); }
+  async flush() {
+    if (!this.dirty.size) return;
+    const set = {};
+    for (const pid of this.dirty) { const w = this.wallet.get(pid); if (w && w.loaded) set[pid] = { bal: this.bal(pid), name: w.name, rebuys: w.rebuys }; }
+    this.dirty.clear();
+    try { await this.chips({ set }); } catch (e) {}
+  }
+  async loadWallet(pid, name) {
+    let w = this.wallet.get(pid);
+    if (!w) { w = { bal: START, rebuys: 0, name, loaded: false }; this.wallet.set(pid, w); }
+    w.name = name || w.name;
+    if (!w.loaded) {
+      if (!w.loading) w.loading = this.chips({ get: [pid] }).then(r => { const rec = r.get && r.get[pid]; if (rec) { w.bal = rec.bal; w.rebuys = rec.rebuys || 0; } else this.markDirty(pid); }).catch(() => {});
+      await w.loading; w.loaded = true;
+    }
+    return w;
+  }
+  sendMe(pid) {
+    const w = this.wallet.get(pid); if (!w) return;
+    for (const [, p] of this.peers) if (p.pid === pid) this.send(p.ws, { t: 'pk', a: 'me', bal: this.bal(pid), rebuys: w.rebuys, seat: this.table.seatOf(pid) });
+  }
+  pokerState() {
+    this.drainSaves();
+    const msg = JSON.stringify({ t: 'pk', a: 'state', s: this.table.publicState(), bets: this.bets.publicState() });
+    for (const [, p] of this.peers) {
+      this.send(p.ws, msg);
+      if (!p.pid) continue;
+      const i = this.table.seatOf(p.pid), seat = i >= 0 && this.table.seats[i];
+      this.send(p.ws, { t: 'pk', a: 'hole', hand: this.table.hand, seat: i, hole: seat && seat.inHand ? seat.hole : null, bal: this.bal(p.pid), rebuys: (this.wallet.get(p.pid) || {}).rebuys || 0 });
+    }
+    this.armTick();
+  }
+  drainSaves() { while (this.table.saves.length) { const s = this.table.seats[this.table.saves.pop()]; if (s) this.markDirty(s.pid); } }
+  armTick() {
+    const busy = this.table.active() || this.bets.list.some(m => m.status === 'open' || m.status === 'closed');
+    if (busy && !this.tickT) this.tickT = setInterval(() => {
+      let changed = this.table.tick();
+      for (const [, payouts] of this.bets.tick()) { for (const x of payouts || []) this.credit(x.pid, x.amt); changed = true; }
+      if (this.bets.list.some(m => m.status === 'open' && Date.now() >= m.closes)) changed = true;
+      if (changed) this.pokerState(); else this.armTick();
+    }, 1000);
+    if (!busy && this.tickT) { clearInterval(this.tickT); this.tickT = null; }
+  }
+  async onPoker(id, p, m) {
+    const err = e => { if (e) this.send(p.ws, { t: 'pk', a: 'err', msg: e }); return !!e; };
+    if (!p.pid) return err('Update Kerbside to play poker.');
+    const T = this.table;
+    switch (m.a) {
+      case 'state': this.sendMe(p.pid); return this.pokerState();
+      case 'sit': {
+        const w = await this.loadWallet(p.pid, p.name);
+        if (T.seatOf(p.pid) >= 0) return err('You’re already at the table.');
+        if (w.bal < BLINDS.bb) return err('You’re out of chips: top up first.');
+        if (err(T.sit(+m.seat, { pid: p.pid, peer: id, name: p.name, bal: w.bal }))) return;
+        return this.pokerState();
+      }
+      case 'stand': {
+        const mine = T.seatOf(p.pid); if (mine < 0) return;
+        const left = T.stand(mine), w = this.wallet.get(p.pid); if (w && left != null) w.bal = left;
+        this.markDirty(p.pid); this.sendMe(p.pid); return this.pokerState();
+      }
+      case 'act': { const mine = T.seatOf(p.pid); if (mine < 0) return; if (err(T.act(mine, String(m.act), m.amount))) return; return this.pokerState(); }
+      case 'sitout': { const mine = T.seatOf(p.pid); if (mine < 0) return; T.setSitOut(mine, !!m.on); return this.pokerState(); }
+      case 'topup': {
+        const w = await this.loadWallet(p.pid, p.name), mine = T.seatOf(p.pid);
+        if (mine >= 0 && T.seats[mine].inHand && T.betting()) return err('Wait for this hand to finish.');
+        if (this.bal(p.pid) >= BLINDS.bb) return err('Top-ups are for when you’re out of chips.');
+        w.rebuys++; if (mine >= 0) T.seats[mine].stack = START; else w.bal = START;
+        this.markDirty(p.pid); this.sendMe(p.pid); return this.pokerState();
+      }
+      case 'top': { let top = []; try { await this.flush(); top = (await this.chips({ top: 10 })).top || []; } catch (e) {} return this.send(p.ws, { t: 'pk', a: 'top', top }); }
+    }
+  }
+  async onBet(id, p, m) {
+    const err = e => { if (e) this.send(p.ws, { t: 'pk', a: 'err', msg: e }); return !!e; };
+    const host = id === this.host;
+    switch (m.a) {
+      case 'open': if (!host) return err('The host opens race bets.'); if (err(this.bets.open(String(m.kind), m.options, m.info))) return; return this.pokerState();
+      case 'place': {
+        if (!p.pid) return err('Update Kerbside to bet.');
+        await this.loadWallet(p.pid, p.name);
+        const amt = Math.floor(+m.amt || 0), T = this.table, i = T.seatOf(p.pid);
+        if (amt < 1 || amt > this.bal(p.pid)) return err('You don’t have that many chips.');
+        if (err(this.bets.place(m.id, p.pid, p.name, String(m.opt), amt))) return;
+        if (i >= 0) T.seats[i].stack -= amt; else this.wallet.get(p.pid).bal -= amt;
+        this.markDirty(p.pid); return this.pokerState();
+      }
+      case 'settle': case 'void': {
+        if (!host) return;
+        const pays = m.a === 'settle' ? this.bets.settle(m.id, m.winner) : this.bets.void(m.id);
+        for (const x of pays || []) this.credit(x.pid, x.amt);
+        return this.pokerState();
+      }
+    }
   }
   roster() {
     return { t: 'roster', host: this.host, peers: [...this.peers.entries()].map(([id, p]) => ({ id, name: p.name, color: p.color, device: p.device, muted: p.muted })) };
@@ -588,7 +722,7 @@ export class HangRoom extends DurableObject {
     this.peers.set(id, { ws: server, name: 'Friend ' + id, color: '#9aa5ab', device: 'screen', muted: false });
     if (this.host == null || !this.peers.has(this.host)) this.host = id;
     const r = this.roster();
-    this.send(server, { t: 'welcome', you: id, host: this.host, peers: r.peers, watch: this.watch, env: this.env || null });
+    this.send(server, { t: 'welcome', you: id, host: this.host, peers: r.peers, watch: this.watch, env: this.env || null, look: this.look || 'team' });
     this.broadcast(r, id);
     server.addEventListener('message', e => this.onMsg(id, e.data));
     const leave = () => this.leave(id);
@@ -597,9 +731,20 @@ export class HangRoom extends DurableObject {
     return new Response(null, { status: 101, webSocket: client });
   }
   leave(id) {
+    const gone = this.peers.get(id);
     if (!this.peers.delete(id)) return;
+    if (gone && gone.pid && ![...this.peers.values()].some(q => q.pid === gone.pid)) { // give a dropped player 45 s to reconnect before giving up their seat
+      const pid = gone.pid; clearTimeout(this.graceT.get(pid));
+      this.graceT.set(pid, setTimeout(() => {
+        this.graceT.delete(pid);
+        if ([...this.peers.values()].some(q => q.pid === pid)) return;
+        const i = this.table.seatOf(pid); if (i < 0) return;
+        const left = this.table.stand(i), w = this.wallet.get(pid); if (w && left != null) w.bal = left;
+        this.markDirty(pid); this.pokerState();
+      }, 45000));
+    }
     if (this.host === id) this.host = this.peers.size ? this.peers.keys().next().value : null;
-    if (!this.peers.size) { this.watch = null; this.env = null; return; }
+    if (!this.peers.size) { this.watch = null; this.env = null; this.flush(); return; }
     this.broadcast({ t: 'left', id });
     this.broadcast(this.roster());
   }
@@ -613,6 +758,10 @@ export class HangRoom extends DurableObject {
         p.color = /^#[0-9a-f]{6}$/i.test(m.color || '') ? m.color : p.color;
         p.device = m.device === 'xr' ? 'xr' : 'screen';
         p.muted = !!m.muted;
+        if (typeof m.pid === 'string' && /^[\w-]{8,40}$/.test(m.pid) && !p.pid) {
+          p.pid = m.pid; clearTimeout(this.graceT.get(p.pid)); this.graceT.delete(p.pid);
+          this.loadWallet(p.pid, p.name).then(() => { this.sendMe(p.pid); this.pokerState(); });
+        } else if (p.pid) { const w = this.wallet.get(p.pid); if (w) w.name = p.name; const i = this.table.seatOf(p.pid); if (i >= 0) this.table.seats[i].name = p.name; }
         this.broadcast(this.roster());
         break;
       case 'pose':
@@ -631,8 +780,11 @@ export class HangRoom extends DurableObject {
       case 'env':
         if (id !== this.host || (m.env !== 'garage' && m.env !== 'passthrough')) return;
         this.env = m.env;
-        this.broadcast({ t: 'env', env: m.env }, id);
+        if (m.look === 'team' || m.look === 'casino') this.look = m.look;
+        this.broadcast({ t: 'env', env: m.env, look: this.look || 'team' }, id);
         break;
+      case 'pk': this.onPoker(id, p, m); break;
+      case 'bet': this.onBet(id, p, m); break;
       case 'ping':
         this.send(p.ws, { t: 'pong', c: m.c, s: Date.now() });
         break;
