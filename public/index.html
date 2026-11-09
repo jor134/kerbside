@@ -911,7 +911,7 @@ function setDrawTrack(on) {
 function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
 App.env = store.get('env', 'passthrough'); App.garageLook = store.get('garageLook', 'team'); App.ptWindow = store.get('ptWindow', false); App.ptSize = store.get('ptSize', 'M');
 let garageLoading = null;
-const GARAGE_VER = '8';
+const GARAGE_VER = '9';
 function loadGarage() {
   if (window.KBGarage) return Promise.resolve();
   return garageLoading || (garageLoading = new Promise((res, rej) => {
@@ -2405,7 +2405,7 @@ $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
 const HANG_VER = '4';
-const POKER_VER = '1';
+const POKER_VER = '2';
 let pokerLoading = null;
 window.KBLoadPoker = function loadPoker() { // poker and race bets, for people in a hangout
   if (window.KBPoker) return Promise.resolve();

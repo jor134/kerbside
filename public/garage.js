@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 8;
+const GARAGE_BUILD = 9;
 
 /* ---------------- Materials ---------------- */
 const toon = c => new THREE.MeshToonMaterial({ color: c });
@@ -481,7 +481,7 @@ function updateTraffic(dt) {
 // hangout see you standing on the pitwall too. On a flat screen the camera moves there instead.
 // spot: null (at the circuit table), or where to stand: { pos: local feet position, yaw: local facing (or
 // null to keep the way you're facing), eye: flat-screen eye height, seat: poker seat number }
-let spot = null, OFF = null, BASE = null, offFor = null;
+let spot = null, OFF = null, BASE = null, offFor = null, settle = 0;
 (function patchPoses() {
   if (typeof XRFrame === 'undefined') return;
   const P = XRFrame.prototype, swap = s => (OFF && s === BASE ? OFF : s);
@@ -494,7 +494,11 @@ const standW = new THREE.Vector3();
 const yawOf = v => Math.atan2(v.x, v.z);
 function syncTeleport(show) {
   const want = spot && show && renderer.xr.isPresenting ? spot : null;
-  if (OFF && offFor !== want) { OFF = null; BASE = null; offFor = null; if (!want) setTimeout(() => KB.positionPanels(), 150); }
+  // Moving from one spot to another: drop the old offset first, then wait two frames before measuring
+  // where your head is. Until the headset has drawn a frame without the offset, the head position we
+  // read is still the shifted one, and measuring from it would land you somewhere else entirely.
+  if (OFF && offFor !== want) { OFF = null; BASE = null; offFor = null; settle = 2; if (!want) setTimeout(() => KB.positionPanels(), 150); return; }
+  if (settle > 0) { settle--; return; }
   if (want && !OFF) {
     const ref = renderer.xr.getReferenceSpace(); if (!ref || typeof XRRigidTransform === 'undefined') return;
     const head = KB.xrHead(); standW.copy(want.pos); built.G.localToWorld(standW);
@@ -514,8 +518,9 @@ function setAway(on) { setSpot(on ? PITWALL : null); }
 function away() { return !!spot && App.env === 'garage'; }
 function atPitwall() { return spot === PITWALL && App.env === 'garage'; }
 // Poker seats: you stand at the rail (headset) or look on from your chair (flat screen).
-function seatAt(i) {
+function seatAt(i, again) {
   if (i == null || i < 0) { if (spot && spot.seat != null) setSpot(null); return; }
+  if (spot && spot.seat === i && !again) return; // already there: keep the same spot, so you aren't moved again
   const f = seatSpot(i, POKER.rx + 0.42, POKER.rz + 0.42);
   setSpot({ pos: new THREE.Vector3(f.x, 0, f.z), yaw: f.yaw, eye: 1.25, pitch: -0.62, seat: i });
 }
@@ -624,7 +629,7 @@ function frame(dt) {
   }
   if (!xr && App.placingWindow) App.placingWindow = false;
 }
-function sessionEnded() { win.placed = false; frozenYaw = null; lastAnchor.set(1e9, 0, 0); App.placingWindow = false; OFF = null; BASE = null; offFor = null; }
+function sessionEnded() { win.placed = false; frozenYaw = null; lastAnchor.set(1e9, 0, 0); App.placingWindow = false; OFF = null; BASE = null; offFor = null; settle = 0; }
 
 window.KBGarage = { frame, startWindowPlacing, confirmWindow, canWindow, sessionEnded, setTeamColor, setAway, away, atPitwall, flatCam, lookBy, zoomBy, build: GARAGE_BUILD,
   setLook, look: () => look_, seatAt, seated: () => spot && spot.seat != null ? spot.seat : -1,

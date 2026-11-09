@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 1;
+const POKER_BUILD = 2;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -62,6 +62,9 @@ function placeMe() { // in the casino garage, sitting down moves you to your cha
   else if (KBGarage.seated() >= 0) KBGarage.seatAt(-1);
 }
 function lookChanged() { placeMe(); P.dirty = true; }
+// Place here: stand (or sit) where you want your seat to be in your real room, facing the way you want
+// to face the table, and press it. The table is re-placed around you.
+function placeHere() { if (P.mySeat >= 0 && window.KBGarage) { KBGarage.seatAt(P.mySeat, true); buzz(0.4, 30); toast('Your seat is where you are now.', 2500); } }
 
 /* ---------------- Actions ---------------- */
 const act = (a, amount) => send({ t: 'pk', a: 'act', act: a, amount });
@@ -401,7 +404,8 @@ function updateBar() {
     c.fillText('Pick up your cards to look · drop chips in the gold circle · knock the table to check · throw your cards in to fold', 28, 268);
     btn(24, 300, 220, 70, st && st.sitOut ? 'I’m back' : 'Sit out', () => send({ t: 'pk', a: 'sitout', on: !(st && st.sitOut) }));
     btn(256, 300, 220, 70, 'Leave table', () => send({ t: 'pk', a: 'stand' }));
-    if (st && st.stack < 100) btn(488, 300, 220, 70, 'Top up', () => send({ t: 'pk', a: 'topup' }), 'go');
+    btn(488, 300, 220, 70, 'Place here', placeHere);
+    if (st && st.stack < 100) btn(720, 300, 220, 70, 'Top up', () => send({ t: 'pk', a: 'topup' }), 'go');
   } else {
     const live = P.bets.filter(m => m.status === 'open'), host = KBHang.isHost();
     let y = 100;
