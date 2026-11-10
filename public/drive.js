@@ -223,7 +223,7 @@ if (!window.KB) return; // loaded for testing only
 /* =====================================================================
    Game: everything that touches the page, the 3D scene or the headset
    ===================================================================== */
-const DRIVE_BUILD = 7;
+const DRIVE_BUILD = 8;
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const Sim = makeSim(THREE);
 const { clamp, wrapA, wrapD } = Sim;
@@ -876,12 +876,82 @@ function updateVignette(dt) {
 }
 
 /* ---------------- Steering wheel (headset) ---------------- */
-const wheel = (() => {
-  const g = new THREE.Group();
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.016, 8, 32), KBMat({ color: 0x24292d }, 'carbon'));
-  const hub = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.06, 0.03), KBMat({ color: 0xd2342b }, 'plastic'));
-  g.add(rim, hub); g.visible = false; scene.add(g); return g;
+// The inside of the car you're sitting in. Everything is in the car's own coordinates (nose towards +z,
+// your eyes at 0.98 m up, 0.45 m ahead of the middle) and rides on the car, on a screen and in the headset.
+// In cockpit view your car swaps to a body with an open cockpit and no helmet, so you're not inside one.
+const EYE = { y: 0.98, z: 0.45 }, WHEEL = { y: 0.56, z: 0.85, tilt: 0.809 }; // the wheel faces your eyes, 42 cm below and 40 cm ahead
+const dash = { cv: document.createElement('canvas') }; dash.cv.width = 256; dash.cv.height = 144; dash.tex = new THREE.CanvasTexture(dash.cv);
+const cockpit = (() => {
+  const rig = new THREE.Group(); rig.visible = false;
+  const carbon = KBMat({ color: 0x1b1e21 }, 'carbon'), pad = KBMat({ color: 0x101214 }, 'matte'), grip = KBMat({ color: 0x15171a }, 'matte'),
+    suit = KBMat({ color: 0xe9e6df }, 'satin'), glove = KBMat({ color: 0x1c1f22 }, 'satin'), metal = KBMat({ color: 0x9aa1a6 }, 'metal');
+  const box = (p, w, h, d, x, y, z, m) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.position.set(x, y, z); p.add(o); return o; };
+  const cyl = (p, r, h, x, y, z, m, seg = 12) => { const o = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, seg), m); o.position.set(x, y, z); p.add(o); return o; };
+  // cockpit well: padded floor, the rim around the opening, headrest pads beside and behind your head
+  box(rig, 0.4, 0.012, 0.88, 0, 0.458, 0.55, pad);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(1, 0.045, 8, 40), carbon); rim.rotation.x = Math.PI / 2; rim.scale.set(0.285, 0.5, 0.6); rim.position.set(0, 0.675, 0.55); // lies on the well's side walls; ahead and behind it tucks under the bodywork rig.add(rim);
+  for (const sx of [-1, 1]) box(rig, 0.07, 0.27, 0.36, sx * 0.275, 0.8, 0.3, pad);
+  box(rig, 0.5, 0.2, 0.08, 0, 0.9, 0.12, pad);
+  // dash bulkhead ahead of the wheel, with the wheel's column
+  box(rig, 0.4, 0.05, 0.1, 0, 0.69, 1.03, carbon);
+  const col = cyl(rig, 0.022, 0.2, 0, 0.5, 0.94, metal); col.rotation.x = WHEEL.tilt + Math.PI / 2;
+  // you: chest and shoulders, lap and knees under the wheel, and arms out to the wheel
+  box(rig, 0.34, 0.3, 0.2, 0, 0.62, 0.36, suit); box(rig, 0.42, 0.07, 0.2, 0, 0.79, 0.37, suit);
+  for (const sx of [-1, 1]) box(rig, 0.13, 0.09, 0.36, sx * 0.1, 0.505, 0.6, suit); // knees stay under the wheel
+  box(rig, 0.3, 0.035, 0.03, 0, 0.83, 0.3, KBMat({ color: 0x24292d }, 'plastic')); // belts across the shoulders
+  const arms = [-1, 1].map(() => { const a = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.036, 1, 10), suit); rig.add(a); return a; });
+  // the steering wheel: carbon plate, hand grips, screen, shift lights, buttons, dials and paddles.
+  // Built to be looked at from its -z side, which is the side that faces you.
+  const wheel = new THREE.Group(); wheel.position.set(0, WHEEL.y, WHEEL.z); rig.add(wheel);
+  box(wheel, 0.27, 0.15, 0.018, 0, 0, 0, carbon);
+  box(wheel, 0.2, 0.03, 0.018, 0, 0.085, 0, carbon); box(wheel, 0.16, 0.025, 0.018, 0, -0.085, 0, carbon);
+  for (const sx of [-1, 1]) {
+    const g1 = cyl(wheel, 0.019, 0.15, sx * 0.14, 0, 0, grip, 10); g1.rotation.z = sx * 0.12;
+    box(wheel, 0.05, 0.02, 0.02, sx * 0.125, 0.07, 0, grip); box(wheel, 0.05, 0.02, 0.02, sx * 0.125, -0.07, 0, grip);
+    box(wheel, 0.07, 0.09, 0.006, sx * 0.105, 0.0, 0.03, metal); // shift paddles behind
+    box(wheel, 0.05, 0.085, 0.07, sx * 0.14, 0, -0.012, glove); // your gloves on the grips
+    const th = box(wheel, 0.022, 0.022, 0.06, sx * 0.11, 0.035, -0.03, glove); th.rotation.y = sx * 0.5;
+  }
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.105, 0.059), new THREE.MeshBasicMaterial({ map: dash.tex })); screen.rotation.y = Math.PI; screen.position.set(0, 0.022, -0.0095); wheel.add(screen);
+  const colours = [0xd2342b, 0x2f8f4e, 0xe8c33a, 0x2f6fd0, 0xf28a1e, 0xe9e6df, 0x8e5bd6, 0x2f8f4e];
+  colours.forEach((cl, i) => { const sx = i < 4 ? -1 : 1, k = i % 4; const b = cyl(wheel, 0.008, 0.008, sx * (0.075 + (k % 2) * 0.026), 0.045 - Math.floor(k / 2) * 0.03, -0.012, KBMat({ color: cl }, 'plastic'), 10); b.rotation.x = Math.PI / 2; });
+  for (const x of [-0.045, 0, 0.045]) { const d = cyl(wheel, 0.013, 0.012, x, -0.045, -0.014, metal, 12); d.rotation.x = Math.PI / 2; box(wheel, 0.004, 0.012, 0.004, x, -0.038, -0.021, KBMat({ color: 0xd2342b }, 'plastic')); }
+  rig.traverse(o => { o.layers.enable(0); o.layers.enable(KB.REAL); });
+  return { rig, wheel, arms, suit, body: null };
 })();
+const wheel = cockpit.wheel;
+const armA = new THREE.Vector3(), armB = new THREE.Vector3(), armUp = new THREE.Vector3(0, 1, 0);
+// Call every frame: puts the cockpit on your car (the full-size one in the headset, the camera's one on a
+// screen), opens your car's body, turns the wheel and moves your arms with it.
+function updateCockpit() {
+  const p = D.player, on = !!(p && p.model && window.KBDrive && KBDrive.active && D.view === 'cockpit' && (!renderer.xr.isPresenting || fullSizeXR()));
+  const host = on ? (renderer.xr.isPresenting ? p.model : p.real) : null;
+  if (cockpit.body && (!on || cockpit.body.parent !== host)) { cockpit.body.geometry = KB.CarGeo.body; cockpit.body = null; }
+  if (cockpit.rig.parent !== host) { if (cockpit.rig.parent) cockpit.rig.parent.remove(cockpit.rig); if (host) host.add(cockpit.rig); }
+  cockpit.rig.visible = on; if (!on) return;
+  if (!cockpit.body) { cockpit.body = host.children[0]; cockpit.body.geometry = KB.CarGeo.bodyOpen; }
+  const a = D.wheelAngle != null ? D.wheelAngle : -p.steer * 1.15; // as seen by you: positive is anticlockwise
+  wheel.rotation.set(WHEEL.tilt, 0, -a, 'XYZ');
+  const ct = Math.cos(WHEEL.tilt), st = Math.sin(WHEEL.tilt);
+  cockpit.arms.forEach((arm, i) => {
+    const sx = i ? 1 : -1, hx = sx * 0.14 * Math.cos(-a), hy = sx * 0.14 * Math.sin(-a), hz = -0.03; // hand on its grip, in the wheel's plane
+    armB.set(hx, WHEEL.y + hy * ct - hz * st, WHEEL.z + hy * st + hz * ct); armA.set(sx * 0.2, 0.8, 0.4);
+    const d = armB.sub(armA), len = d.length();
+    arm.position.copy(armA).addScaledVector(d, 0.5); arm.scale.set(1, len, 1); arm.quaternion.setFromUnitVectors(armUp, d.multiplyScalar(1 / len));
+  });
+}
+function drawDash() { // the screen on the wheel: shift lights, gear, speed
+  const c = dash.cv.getContext('2d'), p = D.player; c.fillStyle = '#05070a'; c.fillRect(0, 0, 256, 144);
+  if (!p) { dash.tex.needsUpdate = true; return; }
+  const { gear, rpm } = gearRpm(p.v), lit = Math.round((rpm - 5500) / 6500 * 15);
+  for (let i = 0; i < 15; i++) { c.fillStyle = i >= lit ? '#1b2228' : i < 5 ? '#34d058' : i < 10 ? '#e8362b' : '#3f8cff'; c.fillRect(8 + i * 16.2, 6, 12, 12); }
+  c.textBaseline = 'middle'; c.textAlign = 'center'; c.fillStyle = '#E9E6DF';
+  c.font = '700 96px "Barlow Condensed", sans-serif'; c.fillText(p.v < -0.5 ? 'R' : String(gear), 128, 84);
+  c.font = '700 36px "Barlow Condensed", sans-serif'; c.textAlign = 'left'; c.fillText(String(Math.round(Math.abs(p.v) * 3.6)), 10, 62);
+  c.font = '600 18px "Barlow Condensed", sans-serif'; c.fillStyle = '#94A1A8'; c.fillText('km/h', 10, 92);
+  c.textAlign = 'right'; c.fillStyle = '#E9E6DF'; c.font = '700 30px "Barlow Condensed", sans-serif'; c.fillText('L' + ((D.lap && D.lap.n || 0) + 1), 246, 62);
+  c.textAlign = 'left'; dash.tex.needsUpdate = true;
+}
 
 /* ---------------- Headset panels (menu and HUD) ---------------- */
 const XW = 1024, XH = 880, hudW = 768, hudH = 224;
@@ -904,8 +974,6 @@ function placeHud() {
   if (!renderer.xr.isPresenting) return;
   if (fullSizeXR() && D.seat) {
     seatTo(0, -0.3, 0.6, hudMesh.position); hudMesh.lookAt(D.seat.pos);
-    seatTo(0, -0.42, 0.4, wheel.position); wheel.lookAt(D.seat.pos);
-    wheel.rotateZ(D.wheelAngle != null ? D.wheelAngle : -D.player.steer * 1.15);
   } else {
     const h = KB.xrHead(), a = App.placed ? App.anchor : h.clone().addScaledVector(KB.xrForward(), 0.7);
     const toUser = h.clone().sub(a).setY(0).normalize();
@@ -1362,7 +1430,7 @@ function frame(dt, xrFrame) {
     xrPointerTick();
     const showRays = !fullSizeXR() || D.xrMenu; // hide pointer lines while driving full size
     for (const c of KB.controllers) c.userData.line.visible = showRays;
-  } else if (D.wasXR) { D.wasXR = false; D.seat = null; xrMenuMesh.visible = hudMesh.visible = wheel.visible = vig.visible = false; applyViewMode(); UI.touchControls(); }
+  } else if (D.wasXR) { D.wasXR = false; D.seat = null; xrMenuMesh.visible = hudMesh.visible = vig.visible = false; applyViewMode(); UI.touchControls(); }
   const xin = xr ? xrInput(xrFrame) : null;
   const running = tr && D.player && (D.state === 'race' || D.state === 'lights' || D.state === 'finished') && !D.paused;
   if (running) {
@@ -1402,14 +1470,15 @@ function frame(dt, xrFrame) {
     uiT = performance.now();
     if (D.state !== 'menu' && D.state !== 'results') UI.tick();
     if (xr) { hudMesh.visible = !!D.player && D.state !== 'menu' && D.state !== 'results'; if (hudMesh.visible) drawHud(); if (D.xrMenu) drawXrMenu(); }
+    if (cockpit.rig.visible) drawDash();
   }
   // render
+  updateCockpit();
   if (xr) {
     KB.setGhostPost(null);
     const full = fullSizeXR();
     if (full) placeWorldXR(dt);
     if (hudMesh.visible) placeHud();
-    wheel.visible = full && D.view === 'cockpit' && D.state !== 'menu' && D.state !== 'results';
     xrMenuMesh.visible = D.xrMenu;
     updateVignette(dt);
     renderer.render(scene, camera);
@@ -1448,7 +1517,7 @@ const Drive = {
     this.active = D.active = false;
     document.body.classList.remove('driving');
     $('#dMenu').hidden = true; UI.hud(false); $('#dTouch').hidden = true;
-    xrMenuMesh.visible = hudMesh.visible = wheel.visible = vig.visible = false;
+    xrMenuMesh.visible = hudMesh.visible = vig.visible = false; updateCockpit();
     App.forceRealModel = false; KB.rebuildModelTrack(); KB.layoutModel();
     App.trackOverride = null; KB.applyTrackVis(); layoutBoards(true);
     KB.setGhostPost(null);
@@ -1456,7 +1525,7 @@ const Drive = {
   },
   frame, onSelect: onSelectXR, recenter,
   allowMapGestures() { return D.view === 'rc'; },
-  _D: D, _Sim: Sim, _menu: () => xmHits, _net: Net
+  _D: D, _Sim: Sim, _cockpit: cockpit, _menu: () => xmHits, _net: Net
 };
 window.KBDrive = Drive;
 })();
