@@ -5,7 +5,7 @@
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const renderer = KB.renderer;
-const HANG_BUILD = 4;
+const HANG_BUILD = 5;
 const COLORS = ['#D2342B', '#F28A1E', '#E8C33A', '#2F8F4E', '#2BB5A0', '#2E6FD9', '#8E5BD6', '#E66BB0', '#C9CED3', '#F2F2EF'];
 
 const me = Object.assign({ name: '', color: COLORS[Math.floor(Math.random() * COLORS.length)], follow: true }, store.get('hang:me', {}));
@@ -509,7 +509,9 @@ function drawXrPanel() {
 function placePanel() {
   const ui = KB.uiMesh;
   panel.position.copy(ui.position); panel.quaternion.copy(ui.quaternion);
-  panel.translateY(-0.36); panel.translateZ(0.01);
+  // sits just under the menu, whatever the menu's height: overlapping it hides and blocks its bottom buttons
+  const uiH = (ui.geometry.parameters && ui.geometry.parameters.height) || 0.7, pH = 0.38 * PH / PW;
+  panel.translateY(-(uiH / 2 + pH / 2 + 0.015)); panel.translateZ(0.01);
 }
 const ray = new THREE.Raycaster(), rm = new THREE.Matrix4();
 function pointerHit(ctl) {
@@ -609,9 +611,7 @@ const UI = {
     else if (a === 'sound') unlockAudio();
     else if (a === 'follow') { me.follow = b.checked; saveMe(); if (me.follow && H.watch) applyWatch(H.watch); this.render(); }
     else if (a === 'invite') {
-      const r = KB.relayInfo(); if (!r) return;
-      const typed = (store.get('relayUrl', '') || '').replace(/\/+$/, '');
-      const link = location.origin + location.pathname + '#key=' + encodeURIComponent(r.key) + '&hang=' + H.code + (typed && typed !== location.origin ? '&relay=' + encodeURIComponent(typed) : '');
+      const link = inviteLink(); if (!link) return;
       try {
         if (navigator.share) { await navigator.share({ title: 'Kerbside', text: 'Watch the race with me in room ' + H.code, url: link }); return; }
         await navigator.clipboard.writeText(link); toast('Invite link copied. It includes your relay key.');
@@ -660,9 +660,26 @@ function frame(dt, xrFrame) {
 }
 
 /* ---------------- Public ---------------- */
+function inviteLink() {
+  const r = KB.relayInfo(); if (!r || !H.code) return null;
+  const typed = (store.get('relayUrl', '') || '').replace(/\/+$/, '');
+  return location.origin + location.pathname + '#key=' + encodeURIComponent(r.key) + '&hang=' + H.code + (typed && typed !== location.origin ? '&relay=' + encodeURIComponent(typed) : '');
+}
+// From the headset menu: open a room if you aren't in one, and copy the invite link. The share sheet
+// can't open inside the headset view, so the room code is what friends need; the link is on the clipboard.
+async function inviteFromHeadset() {
+  if (!H.joined) {
+    UI.build();
+    const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; let code = ''; for (let i = 0; i < 4; i++) code += A[Math.floor(Math.random() * A.length)];
+    await join(code); if (!H.joined) return;
+  }
+  let copied = false; const link = inviteLink();
+  try { if (link) { await navigator.clipboard.writeText(link); copied = true; } } catch (e) {}
+  toast(`Room ${H.code}. Friends choose Watch with friends and enter ${H.code}.` + (copied ? ' The invite link is copied: paste it in a message.' : ''), 12000);
+}
 const Hang = {
   open(prefill) { UI.build(); if (prefill) H.pending = String(prefill).toUpperCase(); UI.show(true); },
-  join, leave, frame, onSelect, publishEnv, send, pid: () => pid, myId: () => H.id,
+  join, leave, frame, onSelect, publishEnv, send, pid: () => pid, myId: () => H.id, invite: inviteFromHeadset, code: () => (H.joined ? H.code : ''), name: () => myName(),
   active() { return H.joined; },
   isHost,
   _H: H

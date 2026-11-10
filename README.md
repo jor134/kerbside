@@ -90,6 +90,15 @@ Under View → Surroundings, choose **Pit garage** for a fully virtual team gara
 - **Cars.** Every car within about 270 m of the start/finish line drives past full size at its real speed, from the live or replay positions. Cars the timing shows in the pits use the pit lane, and stop in the working lane for their stop, at their real place along the pit lane.
 - In a hangout, the host's choice of surroundings applies to everyone. The TV window and where you stand (garage or pitwall) stay personal; friends see you on the pitwall when you go there.
 
+### In the headset
+
+- **Menu.** **Hide menu** puts the menu away. A round **MENU** button sits on the back of your left wrist: touch it with your right index finger (hand tracking), or point at it and click (controllers), and the menu appears in front of you. With no left hand in view while the menu is hidden, the button waits low in front of you.
+- **Thumbsticks are off** unless you switch **Thumbsticks** on in the menu, so a nudge can't turn or resize the table. Use **Turn**, **Smaller** and **Bigger** on the menu instead. Steering with a thumbstick in drive mode is separate: choose it in the drive menu.
+- **Invite friends** opens a room if you aren't in one and shows its 4-letter code; friends choose Watch with friends and enter it. The invite link is also copied, to paste in a message. The microphone prompt can't appear inside the headset view, so join a room once from the page first to allow the mic.
+- **Drive this circuit** opens drive mode without leaving the headset. Choose Time trial, AI race or **Race friends** on the drive menu. Race friends puts everyone from your hangout in the same race room; whoever is in first hosts and presses Start.
+- **Your hands** appear as gloves in the pit garage and casino. In your own room you see your real ones.
+- Messages that appear as pop-ups on the page are shown on a small card in front of you.
+
 ### Casino and poker
 
 Under Surroundings → Pit garage, choose **Casino** to dress the garage for a night in Vegas: carpet, neon, chandeliers, slot machines and a poker table at the back. In a hangout the host's choice applies to everyone; in the headset it's the **Casino** button on the panel.
@@ -106,6 +115,8 @@ Under Surroundings → Pit garage, choose **Casino** to dress the garage for a n
   - **Place here** on the action bar: stand or sit where you want your seat to be in your real room (a real chair works well), face the way you want to face the table, and press it. The table is re-placed around you.
 
 **Race bets** are pool bets on the race: everything staked is shared by whoever picked the winner, in proportion to their stake, and if nobody picked it everyone gets their stake back. The host opens them (**Next to pit**, **Leader in 3 laps**, **Safety car in the next 10 laps?**); betting stays open for a minute. The host's app settles them from the race on the host's screen, at the host's broadcast delay, so pick a host who's watching. The host can also call a bet off.
+
+**Friends' race winner.** When friends race each other (Drive → Race friends), the race host can press **Open bets** in the lobby. Everyone in the hangout can back a driver until the race starts: 500 a press on the drive menu, or any amount under Race bets. The pool is paid when the race host finishes; if the race host leaves early the bet is called off and stakes are returned.
 
 ### Voice on every network (Cloudflare TURN)
 

@@ -255,7 +255,8 @@ export class PokerTable {
 export const MARKETS = {
   pit: { label: 'Next driver to pit', windowMs: 60000, expireMs: 20 * 60000 },
   leader: { label: 'Leader in 3 laps', windowMs: 60000, expireMs: 30 * 60000 },
-  sc: { label: 'Safety car in the next 10 laps?', windowMs: 60000, expireMs: 45 * 60000 }
+  sc: { label: 'Safety car in the next 10 laps?', windowMs: 60000, expireMs: 45 * 60000 },
+  race: { label: 'Friends’ race winner', windowMs: 3 * 60000, expireMs: 40 * 60000 } // opened and closed by whoever hosts the drive race
 };
 export class SideBets {
   constructor(opts = {}) { this.now = opts.now || Date.now; this.list = []; this.seq = 1; }
@@ -270,6 +271,7 @@ export class SideBets {
     return null;
   }
   find(id) { return this.list.find(m => m.id === +id); }
+  close(id) { const m = this.find(id); if (m && m.status === 'open') { m.status = 'closed'; m.closes = Math.min(m.closes, this.now()); } }
   place(id, pid, name, opt, amt) {
     const m = this.find(id); if (!m || m.status !== 'open' || this.now() >= m.closes) return 'Betting on that has closed.';
     if (!m.options.some(o => o.k === opt)) return 'Pick one of the choices.';
@@ -304,7 +306,7 @@ export class SideBets {
     return out;
   }
   publicState() {
-    return this.list.map(m => ({ id: m.id, kind: m.kind, label: m.label, options: m.options, status: m.status, closes: m.closes, info: m.info, winner: m.winner,
+    return this.list.map(m => ({ id: m.id, kind: m.kind, label: m.label, options: m.options, status: m.status, closes: m.closes, info: m.info, winner: m.winner, opener: m.opener || null,
       pool: m.bets.reduce((a, b) => a + b.amt, 0), byOpt: m.options.map(o => m.bets.filter(b => b.opt === o.k).reduce((a, b) => a + b.amt, 0)),
       bets: m.bets.map(b => ({ name: b.name, pid: b.pid, opt: b.opt, amt: b.amt })), payouts: m.payouts, refunded: !!m.refunded }));
   }

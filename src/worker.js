@@ -684,7 +684,15 @@ export class HangRoom extends DurableObject {
     const err = e => { if (e) this.send(p.ws, { t: 'pk', a: 'err', msg: e }); return !!e; };
     const host = id === this.host;
     switch (m.a) {
-      case 'open': if (!host) return err('The host opens race bets.'); if (err(this.bets.open(String(m.kind), m.options, m.info))) return; return this.pokerState();
+      case 'open': {
+        // Bets on the real race are the host's; a bet on a friends' drive race belongs to whoever hosts that race.
+        if (m.kind !== 'race' && !host) return err('The host opens race bets.');
+        if (m.kind === 'race' && !p.pid) return err('Update Kerbside to open bets.');
+        if (err(this.bets.open(String(m.kind), m.options, m.info))) return;
+        this.bets.list[this.bets.list.length - 1].opener = p.pid || null;
+        return this.pokerState();
+      }
+      case 'close': { const mk = this.bets.find(m.id); if (!mk || !(host || (mk.opener && mk.opener === p.pid))) return; this.bets.close(m.id); return this.pokerState(); }
       case 'place': {
         if (!p.pid) return err('Update Kerbside to bet.');
         await this.loadWallet(p.pid, p.name);
@@ -695,7 +703,8 @@ export class HangRoom extends DurableObject {
         this.markDirty(p.pid); return this.pokerState();
       }
       case 'settle': case 'void': {
-        if (!host) return;
+        const mk = this.bets.find(m.id); if (!mk) return;
+        if (!(mk.kind === 'race' ? (mk.opener && mk.opener === p.pid) || (host && m.a === 'void') : host)) return;
         const pays = m.a === 'settle' ? this.bets.settle(m.id, m.winner) : this.bets.void(m.id);
         for (const x of pays || []) this.credit(x.pid, x.amt);
         return this.pokerState();

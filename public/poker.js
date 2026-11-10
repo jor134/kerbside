@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 2;
+const POKER_BUILD = 3;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -232,7 +232,7 @@ function betsHtml() {
       h += `<div class="row"><input type="number" id="pkBetAmt" min="1" step="100" value="${P.betAmt}" style="flex:1;min-width:0"><button class="b go" data-pk="bet" data-m="${m.id}">Bet</button></div>`;
     }
     if (m.payouts && m.status === 'settled' && !m.refunded) h += `<div class="sub">Paid: ${m.payouts.map(x => `${esc(x.name || '')} ${fmt(x.amt)}`).join(', ')}</div>`;
-    if (host && (m.status === 'open' || m.status === 'closed')) h += `<div class="row"><button class="b" data-pk="void" data-m="${m.id}">Call it off</button></div>`;
+    if ((host || (m.opener && m.opener === KBHang.pid())) && (m.status === 'open' || m.status === 'closed')) h += `<div class="row"><button class="b" data-pk="void" data-m="${m.id}">Call it off</button></div>`;
     h += '</div>';
   }
   return h;
@@ -256,11 +256,15 @@ function cardTexture(code) {
   const t = new THREE.CanvasTexture(cv); cardTex.set(key, t); return t;
 }
 const cardGeo = new THREE.PlaneGeometry(CW, CH);
+const CARD_T = 0.003, CARD_Y = 0.004; // thickness, and how high a card's centre sits above the table
+const cardSlab = new THREE.BoxGeometry(CW, CH, CARD_T), cardEdge = new THREE.MeshBasicMaterial({ color: 0xd9d4c8 });
 function makeCard() {
   const g = new THREE.Group();
   const face = new THREE.Mesh(cardGeo, new THREE.MeshBasicMaterial({ map: cardTexture('back') }));
   const back = new THREE.Mesh(cardGeo, new THREE.MeshBasicMaterial({ map: cardTexture(null) })); back.rotation.y = Math.PI;
-  g.add(face, back); g.userData = { face, back, code: undefined };
+  // a 3 mm slab between the two faces: cards have real thickness and sit clear of the felt, so they don't flicker
+  const slab = new THREE.Mesh(cardSlab, cardEdge); face.position.z = CARD_T / 2 + 0.0002; back.position.z = -CARD_T / 2 - 0.0002;
+  g.add(slab, face, back); g.userData = { face, back, code: undefined };
   return g;
 }
 function setCard(g, code, faceUp) { // lying on the felt: face up shows the card, face down shows the back
@@ -293,7 +297,7 @@ function build3D(anchor) {
     const s = { dir: new THREE.Vector3(dx, 0, dz).normalize(), side, yaw: sp.yaw,
       cards: [makeCard(), makeCard()], stack: new THREE.Group(), bet: new THREE.Group(), pend: new THREE.Group(), plate: plate(),
       cardAt: at(0.8), stackAt: at(0.86).addScaledVector(side, 0.17), betAt: at(0.55), pendAt: at(0.68), btnAt: at(0.72).addScaledVector(side, -0.15) };
-    s.cards.forEach((c, k) => { c.position.copy(s.cardAt).addScaledVector(side, (k - 0.5) * 0.07); c.position.y = 0.001 + k * 0.0005; c.rotation.set(-Math.PI / 2, 0, -s.yaw + Math.PI); g.add(c); c.userData.home = c.position.clone(); c.userData.homeRot = c.rotation.clone(); c.userData.seat = i; c.userData.k = k; });
+    s.cards.forEach((c, k) => { c.position.copy(s.cardAt).addScaledVector(side, (k - 0.5) * 0.07); c.position.y = CARD_Y; c.rotation.set(-Math.PI / 2, 0, -s.yaw + Math.PI); g.add(c); c.userData.home = c.position.clone(); c.userData.homeRot = c.rotation.clone(); c.userData.seat = i; c.userData.k = k; });
     s.stack.position.copy(s.stackAt); s.bet.position.copy(s.betAt); s.pend.position.copy(s.pendAt);
     s.plate.position.copy(at(1.45)); s.plate.position.y = 0.5; s.plate.scale.set(0.42, 0.16, 1);
     g.add(s.stack, s.bet, s.pend, s.plate);
@@ -304,7 +308,7 @@ function build3D(anchor) {
     s.trays = [100, 500, 1000].map((d, k) => { const t = new THREE.Group(); t.position.copy(at(0.9)).addScaledVector(side, -0.1 - k * 0.07); for (let j = 0; j < 6; j++) { const m = new THREE.Mesh(chipGeo, chipMat(d)); m.position.y = 0.0017 + j * 0.0035; t.add(m); } t.userData.denom = d; g.add(t); return t; });
     seats.push(s);
   }
-  const board = [0, 1, 2, 3, 4].map(k => { const c = makeCard(); c.position.set((k - 2) * 0.075, 0.001, -0.02); c.rotation.set(-Math.PI / 2, 0, 0); g.add(c); return c; });
+  const board = [0, 1, 2, 3, 4].map(k => { const c = makeCard(); c.position.set((k - 2) * 0.075, CARD_Y, -0.02); c.rotation.set(-Math.PI / 2, 0, 0); g.add(c); return c; });
   const pot = new THREE.Group(); pot.position.set(-0.03, 0, 0.1); g.add(pot);
   const potPlate = plate(320, 72); potPlate.position.set(0, 0.16, 0.1); potPlate.scale.set(0.3, 0.068, 1); g.add(potPlate);
   const btn = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.008, 20), new THREE.MeshToonMaterial({ color: 0xffffff })); g.add(btn);
@@ -558,5 +562,17 @@ function frame(dt, xrFrame) {
   if ((uiT += dt) > 0.5 || P.dirty) { uiT = 0; P.dirty = false; render(); }
 }
 
-window.KBPoker = { onMsg, frame, onSelect, open: openUI, lookChanged, build: POKER_BUILD, _P: P, _hand: handLabel, _T: () => T3, _held: () => ({ kind: held.kind, denom: held.denom, near: nearSomething, hands: [...hands.values()] }) };
+// For drive mode: bets on a race between friends, run by whoever hosts that race.
+const raceMarket = () => P.bets.slice().reverse().find(m => m.kind === 'race' && (m.status === 'open' || m.status === 'closed')) || null;
+const Race = {
+  market: raceMarket,
+  mine() { const m = raceMarket(); return m && m.opener === KBHang.pid() ? m : null; },
+  open(options) { send({ t: 'bet', a: 'open', kind: 'race', options, info: {} }); },
+  close() { const m = this.mine(); if (m && m.status === 'open') send({ t: 'bet', a: 'close', id: m.id }); },
+  settle(winner) { const m = this.mine(); if (m) send({ t: 'bet', a: 'settle', id: m.id, winner: String(winner) }); },
+  void() { const m = this.mine(); if (m) send({ t: 'bet', a: 'void', id: m.id }); },
+  bet(opt, amt) { const m = raceMarket(); if (m && m.status === 'open') placeBet(m.id, String(opt), amt); },
+  staked(opt) { const m = raceMarket(); return m ? m.bets.filter(b => b.pid === KBHang.pid() && (opt == null || b.opt === String(opt))).reduce((a, b) => a + b.amt, 0) : 0; }
+};
+window.KBPoker = { onMsg, frame, onSelect, open: openUI, lookChanged, build: POKER_BUILD, race: Race, bal: () => P.bal, _P: P, _hand: handLabel, _T: () => T3, _held: () => ({ kind: held.kind, denom: held.denom, near: nearSomething, hands: [...hands.values()] }) };
 })();

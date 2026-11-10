@@ -223,7 +223,7 @@ if (!window.KB) return; // loaded for testing only
 /* =====================================================================
    Game: everything that touches the page, the 3D scene or the headset
    ===================================================================== */
-const DRIVE_BUILD = 4;
+const DRIVE_BUILD = 5;
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const Sim = makeSim(THREE);
 const { clamp, wrapA, wrapD } = Sim;
@@ -567,7 +567,7 @@ const Net = {
     ws.onclose = () => { if (this.ws === ws) { this.ws = null; clearInterval(this.pingT); UI.lobby('Disconnected from the room.'); } };
     UI.lobby('Connecting…');
   },
-  leave() { const w = this.ws; this.ws = null; clearInterval(this.pingT); if (w) try { w.close(); } catch (e) {} for (const r of D.remotes.values()) dropMeshes(r); D.remotes.clear(); },
+  leave() { const R = raceBets(); if (R && this.ws) R.void(); const w = this.ws; this.ws = null; clearInterval(this.pingT); if (w) try { w.close(); } catch (e) {} for (const r of D.remotes.values()) dropMeshes(r); D.remotes.clear(); },
   send(m) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(m)); },
   isHost() { return this.id != null && this.id === this.host; },
   onMsg(m) {
@@ -579,7 +579,7 @@ const Net = {
     }
     else if (m.t === 'pong') { const now = Date.now(), rtt = now - m.c; if (rtt < this.rttBest * 1.5) { this.rttBest = Math.min(this.rttBest, rtt); this.offset = m.s - (m.c + rtt / 2); } }
     else if (m.t === 'setup') { this.applySetup(m.setup); UI.lobby(); }
-    else if (m.t === 'start') { this.startAt = m.at; this.grid = m.grid || []; startRace('online'); }
+    else if (m.t === 'start') { this.startAt = m.at; this.grid = m.grid || []; const R = raceBets(); if (R) R.close(); startRace('online'); }
     else if (m.t === 'lobby') { this.startAt = null; if (D.state !== 'menu') { endRace(); openMenu(); } UI.lobby(); }
     else if (m.t === 'state') {
       if (m.id === this.id) return;
@@ -620,7 +620,7 @@ const Net = {
     return this.now() - b[b.length - 1].ts < 5000;
   }
 };
-const playerName = () => (cfg.name || 'You').trim().slice(0, 12) || 'You';
+const playerName = () => (cfg.name || (window.KBHang && KBHang.name && KBHang.active() && KBHang.name()) || 'You').trim().slice(0, 12) || 'You';
 const playerTla = () => playerName().replace(/[^a-z0-9]/gi, '').slice(0, 3).toUpperCase() || 'YOU';
 const roomCode = () => { const A = 'ABCDEFGHJKMNPQRSTUVWXYZ'; let s = ''; for (let i = 0; i < 4; i++) s += A[Math.floor(Math.random() * A.length)]; return s; };
 
@@ -786,6 +786,7 @@ function simStep(dt, inp) {
 function showResults() {
   D.state = 'results'; Snd.stop();
   D.results = standings();
+  if (D.kind === 'online') settleRaceBets(D.results);
   UI.results(D.results); openMenu();
 }
 const fmt = t => { if (t == null) return '–'; const m = Math.floor(t / 60), s = t - m * 60; return (m ? m + ':' + (s < 10 ? '0' : '') : '') + s.toFixed(3); };
@@ -883,7 +884,7 @@ const wheel = (() => {
 })();
 
 /* ---------------- Headset panels (menu and HUD) ---------------- */
-const XW = 1024, XH = 640, hudW = 768, hudH = 224;
+const XW = 1024, XH = 880, hudW = 768, hudH = 224;
 const xmCanvas = document.createElement('canvas'); xmCanvas.width = XW; xmCanvas.height = XH;
 const xmTex = new THREE.CanvasTexture(xmCanvas);
 const xrMenuMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.62 * XH / XW), new THREE.MeshBasicMaterial({ map: xmTex, transparent: true, depthTest: false }));
@@ -945,7 +946,31 @@ function drawXrMenu() {
   btn(480, y, 200, 'Recentre', false, recenter);
   btn(694, y, 298, 'Exit drive mode', false, () => Drive.close());
   if (D.state !== 'results') {
-    y += 90;
+    const racing = D.state === 'race' || D.state === 'lights' || D.state === 'finished';
+    if (!racing) { // choose the race here, without leaving the headset
+      y += 108;
+      c.fillStyle = '#94A1A8'; c.font = '600 26px "Barlow Condensed"'; c.fillText('Race', 32, y - 8);
+      let rx = 32;
+      for (const [v, l] of [['tt', 'Time trial'], ['ai', 'AI race']]) { btn(rx, y, 200, l, cfg.type === v, () => { cfg.type = v; saveCfg(); UI.refresh(); }); rx += 214; }
+      btn(rx, y, 240, 'Race friends', cfg.type === 'online', raceFriends); rx += 254;
+      if (cfg.type === 'ghosts') { c.fillStyle = '#94A1A8'; c.font = '500 22px Barlow, sans-serif'; c.fillText('Real drivers (set on the page)', rx, y + 40); }
+      if (cfg.type === 'online') {
+        y += 76; c.font = '500 24px Barlow, sans-serif'; c.fillStyle = '#E9E6DF';
+        const names = Net.peers.map(p => p.name).join(', ');
+        c.fillText(!Net.ws ? (UI.lobbyMsg || 'Not in a race room yet.') : `Room ${Net.code} · ${Net.peers.length} driver${Net.peers.length === 1 ? '' : 's'}: ${names.length > 44 ? names.slice(0, 43) + '…' : names}`, 32, y + 20);
+        c.fillStyle = '#94A1A8'; if (Net.ws) c.fillText(Net.isHost() ? 'You’re the race host: press Start when everyone is in.' : 'Waiting for the race host to start.', 32, y + 50);
+        const R = raceBets();
+        if (R && Net.ws) { // chips on who wins
+          y += 64; const mk = R.market();
+          if (!mk) { if (Net.isHost() && Net.peers.length >= 2) btn(32, y, 240, 'Open bets', false, openRaceBets); else { c.fillText(Net.isHost() ? 'Bets open once a second driver joins.' : 'The race host can open bets on the winner.', 32, y + 40); } }
+          else if (mk.status === 'open') {
+            let bx = 32; mk.options.slice(0, 4).forEach(o => { btn(bx, y, 190, `${o.label.slice(0, 8)} +500`, R.staked(o.k) > 0, () => R.bet(o.k, 500)); bx += 200; });
+            c.fillStyle = '#F2B233'; c.font = '500 22px Barlow, sans-serif'; c.fillText(`Pool ${mk.pool.toLocaleString()}`, bx + 8, y + 28); c.fillText(`You ${R.staked().toLocaleString()}`, bx + 8, y + 54);
+          } else { c.fillStyle = '#F2B233'; c.fillText(`Bets are closed. Pool ${mk.pool.toLocaleString()} chips, your stake ${R.staked().toLocaleString()}.`, 32, y + 40); }
+        }
+      }
+    }
+    y += 108;
     c.fillStyle = '#94A1A8'; c.font = '600 26px "Barlow Condensed"'; c.fillText('View', 32, y - 8);
     let x = 32;
     for (const [v, l] of [['cockpit', 'Cockpit'], ['chase', 'Chase'], ['rc', 'Table (RC)']]) { btn(x, y, 200, l, D.view === v, () => setView(v)); x += 214; }
@@ -966,7 +991,7 @@ function drawXrMenu() {
     btn(x, y, 258, 'Vignette: ' + cfg.comfort, cfg.comfort !== 'off', () => { cfg.comfort = lv[(lv.indexOf(cfg.comfort) + 1) % 4]; saveCfg(); });
   }
   c.font = '400 20px Barlow'; c.fillStyle = '#94A1A8';
-  c.fillText('B / Y: menu · thumbstick press: recentre · right trigger: throttle · left trigger: brake. Set up race types on the page before entering the headset.', 32, XH - 24);
+  c.fillText('B / Y: menu · thumbstick press: recentre · right trigger: throttle · left trigger: brake.', 32, XH - 24);
   xmHits = hits; xmTex.needsUpdate = true;
 }
 function drawHud() {
@@ -994,6 +1019,23 @@ function drawHud() {
   hudTex.needsUpdate = true;
 }
 const ray = new THREE.Raycaster(), rm = new THREE.Matrix4();
+// Race friends: everyone in your hangout who chooses this lands in the same race room (it uses the
+// hangout's room code), so there's nothing to type in the headset.
+function raceFriends() {
+  const code = window.KBHang && KBHang.active() ? KBHang.code() : '';
+  if (!code) { toast('Racing friends needs a hangout: go back and choose Invite friends on the menu first.', 7000); return; }
+  cfg.type = 'online'; saveCfg();
+  if (!Net.ws || Net.code !== code) { Net.connect(code); Net.pendingSetup = true; }
+  UI.refresh();
+}
+// Chips on a friends' race: the race host opens the bet, it closes at the start, and the winner settles it.
+const raceBets = () => (window.KBPoker && KBPoker.race && window.KBHang && KBHang.active() ? KBPoker.race : null);
+function openRaceBets() { const R = raceBets(); if (R && Net.isHost() && Net.peers.length >= 2) R.open(Net.peers.map(p => ({ k: String(p.id), label: p.name }))); }
+function settleRaceBets(rows) {
+  const R = raceBets(); if (!R || !R.mine()) return;
+  const w = rows && rows[0];
+  if (w && w.fin != null) R.settle(w.id === 'you' ? Net.id : w.id); else R.void();
+}
 function xrPointerTick() {
   let hp = null;
   for (const ctl of KB.controllers) {
@@ -1203,6 +1245,9 @@ body.driving #bar, body.driving #dock, body.driving #board, body.driving #transp
         } else {
           h += `<p class="sub">Room code</p><div class="code">${Net.code}</div><ol>${Net.peers.map(p => `<li><span style="color:${p.color}">●</span> ${p.name}${p.id === Net.host ? ' (host)' : ''}${p.id === Net.id ? ' (you)' : ''}</li>`).join('')}</ol>`;
           h += `<p class="sub">${this.lobbyMsg || (Net.isHost() ? 'Share the code. Start when everyone has joined.' : (Net.setup ? 'Waiting for the host to start.' : 'Waiting for the host to choose a circuit.'))}</p>`;
+          const R = raceBets(), mk = R && R.market();
+          if (R && !mk && Net.isHost() && Net.peers.length >= 2) h += `<div class="row"><button class="ghost" id="dBets">Open bets on the winner</button></div>`;
+          else if (mk) h += `<p class="sub">Bets on the winner are ${mk.status === 'open' ? 'open' : 'closed'}: pool ${mk.pool.toLocaleString()} chips. Place them under Poker and race bets.</p>`;
           h += `<div class="row"><button class="ghost" id="dLeave">Leave room</button></div>`;
         }
       }
@@ -1267,6 +1312,7 @@ body.driving #bar, body.driving #dock, body.driving #board, body.driving #transp
     });
     on('dJoin', 'onclick', () => { const c = ($('#dCode').value || '').toUpperCase().replace(/[^A-Z]/g, ''); if (c.length !== 4) { toast('Room codes are 4 letters.'); return; } Net.connect(c); });
     on('dLeave', 'onclick', () => { Net.leave(); this.refresh(); });
+    on('dBets', 'onclick', () => { openRaceBets(); setTimeout(() => this.refresh(), 400); });
     on('dStart', 'onclick', () => startFromMenu());
     on('dResume', 'onclick', () => closeMenu());
     on('dRestart', 'onclick', () => startFromMenu());
@@ -1355,7 +1401,7 @@ function frame(dt, xrFrame) {
   if (performance.now() - uiT > 200) {
     uiT = performance.now();
     if (D.state !== 'menu' && D.state !== 'results') UI.tick();
-    if (xr) { hudMesh.visible = !!D.player && D.state !== 'menu' && D.state !== 'results'; if (hudMesh.visible) drawHud(); if (D.xrMenu && D.state === 'race') drawXrMenu(); }
+    if (xr) { hudMesh.visible = !!D.player && D.state !== 'menu' && D.state !== 'results'; if (hudMesh.visible) drawHud(); if (D.xrMenu) drawXrMenu(); }
   }
   // render
   if (xr) {
@@ -1410,7 +1456,7 @@ const Drive = {
   },
   frame, onSelect: onSelectXR,
   allowMapGestures() { return D.view === 'rc'; },
-  _D: D, _Sim: Sim
+  _D: D, _Sim: Sim, _menu: () => xmHits, _net: Net
 };
 window.KBDrive = Drive;
 })();

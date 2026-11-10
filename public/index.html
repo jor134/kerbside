@@ -282,6 +282,7 @@ if (!store.get('defaultsV2', false)) {
 if (!store.get('defaultsV3', false)) { store.set('scenery', true); store.set('defaultsV3', true); }
 let toastTimer;
 function toast(msg, ms = 4500) {
+  try { xrToast(msg, ms); } catch (e) {} // inside the headset the page's toast can't be seen
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms);
 }
@@ -911,7 +912,7 @@ function setDrawTrack(on) {
 function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
 App.env = store.get('env', 'passthrough'); App.garageLook = store.get('garageLook', 'team'); App.ptWindow = store.get('ptWindow', false); App.ptSize = store.get('ptSize', 'M');
 let garageLoading = null;
-const GARAGE_VER = '9';
+const GARAGE_VER = '10';
 function loadGarage() {
   if (window.KBGarage) return Promise.resolve();
   return garageLoading || (garageLoading = new Promise((res, rej) => {
@@ -1907,7 +1908,7 @@ function resize() {
 addEventListener('resize', resize); resize();
 
 /* ================= Headset panels ================= */
-const UIW = 1024, UIH = 1030;
+const UIW = 1024, UIH = 1200;
 const uiCanvas = document.createElement('canvas'); uiCanvas.width = UIW; uiCanvas.height = UIH;
 const uctx = uiCanvas.getContext('2d');
 const uiTex = new THREE.CanvasTexture(uiCanvas);
@@ -2045,6 +2046,17 @@ function drawXRPanel() {
     c.fillText('Sign in, choose Watch live, make the player full screen,', 240, y5 + 26);
     c.fillText('move it to the left window slot, then minimize Kerbside.', 240, y5 + 50);
   }
+  const y6 = 1012, room = window.KBHang && KBHang.active() && KBHang.code ? KBHang.code() : '';
+  btn(32, y6, 250, 'Drive this circuit', false, driveFromHeadset);
+  btn(292, y6, 250, room ? 'Invite · room ' + room : 'Invite friends', !!room, inviteFromHeadset);
+  btn(552, y6, 230, App.sticks ? 'Thumbsticks: on' : 'Thumbsticks: off', App.sticks, () => setSticks(!App.sticks));
+  btn(792, y6, 200, 'Hide menu', false, () => setMenuHidden(true));
+  const y7 = 1096, turnBy = a => { App.tableYaw += a; layoutModel(); }, sizeBy = f => { App.tableScale = Math.max(0.4, Math.min(4, App.tableScale * f)); layoutModel(); };
+  c.font = '600 26px "Barlow Condensed", sans-serif'; c.fillStyle = '#94A1A8'; c.fillText('Table', 32, y7 + 40);
+  btn(100, y7, 130, '⟲ Turn', false, () => turnBy(Math.PI / 12)); btn(240, y7, 130, 'Turn ⟳', false, () => turnBy(-Math.PI / 12));
+  btn(380, y7, 130, 'Smaller', false, () => sizeBy(1 / 1.15)); btn(520, y7, 130, 'Bigger', false, () => sizeBy(1.15));
+  c.font = '500 18px Barlow, sans-serif';
+  c.fillText('Hidden menu: tap the button on your left', 668, y7 + 26); c.fillText('wrist (or point at it and click) to show it.', 668, y7 + 50);
   if (SAT.attrib) { c.font = '400 18px Barlow, sans-serif'; c.fillStyle = '#94A1A8'; c.fillText(SAT.attrib, 32, UIH - 12); }
   App.uiHits = hits; uiTex.needsUpdate = true;
 }
@@ -2060,6 +2072,7 @@ const controllers = [0, 1].map(i => {
 const raycaster = new THREE.Raycaster(), tmpM = new THREE.Matrix4();
 function rayFrom(c) { tmpM.identity().extractRotation(c.matrixWorld); raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld); raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tmpM); }
 function onSelect(e) {
+  if (wristClick(e)) return;
   if (window.KBHang && KBHang.onSelect(e)) return;
   if (window.KBPoker && KBPoker.onSelect(e)) return;
   if (window.KBDrive && KBDrive.active) { KBDrive.onSelect(e); return; }
@@ -2102,7 +2115,7 @@ function positionPanels() {
     const toUser = new THREE.Vector3(head.x - App.anchor.x, 0, head.z - App.anchor.z).normalize();
     const facing = toUser.clone().negate(), right = new THREE.Vector3(-facing.z, 0, facing.x);
     const off = 0.55 * App.tableScale + 0.42;
-    uiMesh.position.copy(App.anchor).addScaledVector(right, -off).addScaledVector(toUser, 0.15); uiMesh.position.y += 0.32;
+    uiMesh.position.copy(App.anchor).addScaledVector(right, -off).addScaledVector(toUser, 0.15); uiMesh.position.y += 0.02 + 0.3 * UIH / UIW;
     chaseMesh.position.copy(App.anchor).addScaledVector(right, off).addScaledVector(toUser, 0.15); chaseMesh.position.y += 0.34;
   } else {
     const f = xrForward();
@@ -2110,6 +2123,131 @@ function positionPanels() {
     chaseMesh.position.copy(head).addScaledVector(turn(f, -0.6), 0.95); chaseMesh.position.y = head.y - 0.32;
   }
   uiMesh.lookAt(head); chaseMesh.lookAt(head);
+}
+/* ================= Headset: messages, wrist menu button, your own hands ================= */
+// Messages: shown on a small card that floats in front of you for a few seconds.
+const xtCv = document.createElement('canvas'); xtCv.width = 1024; xtCv.height = 200;
+const xtTex = new THREE.CanvasTexture(xtCv);
+const xtMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.56 * 200 / 1024), new THREE.MeshBasicMaterial({ map: xtTex, transparent: true, depthTest: false }));
+xtMesh.visible = false; xtMesh.renderOrder = 30; scene.add(xtMesh);
+let xtUntil = 0, xtFresh = false;
+function xrToast(msg, ms) {
+  if (!renderer.xr.isPresenting) return;
+  const c = xtCv.getContext('2d'); c.clearRect(0, 0, 1024, 200);
+  rr(c, 4, 4, 1016, 192, 24); c.fillStyle = 'rgba(32,38,43,0.94)'; c.fill(); c.strokeStyle = '#D2342B'; c.lineWidth = 4; c.stroke();
+  c.font = '500 32px Barlow, sans-serif'; c.fillStyle = '#E9E6DF'; c.textBaseline = 'middle'; c.textAlign = 'center';
+  const words = String(msg).split(' '), lines = ['']; // wrap into at most four lines
+  for (const w of words) { const t = lines[lines.length - 1] ? lines[lines.length - 1] + ' ' + w : w; if (c.measureText(t).width > 950 && lines[lines.length - 1]) lines.push(w); else lines[lines.length - 1] = t; }
+  const show = lines.slice(0, 4); if (lines.length > 4) show[3] = show[3].slice(0, -1) + '…';
+  show.forEach((l, i) => c.fillText(l, 512, 100 + (i - (show.length - 1) / 2) * 42));
+  c.textAlign = 'left'; xtTex.needsUpdate = true;
+  xtUntil = performance.now() + Math.max(2500, Math.min(ms || 4500, 10000)); xtMesh.visible = true; xtFresh = true;
+}
+// The menu can be hidden; a small button on your left wrist brings it back in front of you.
+App.sticks = store.get('sticks', false); App.menuHidden = store.get('menuHidden', false);
+function setSticks(on) { App.sticks = !!on; store.set('sticks', App.sticks); toast(App.sticks ? 'Thumbsticks on: right stick turns and resizes the table, left stick switches cars.' : 'Thumbsticks off.', 5000); }
+function setMenuHidden(hide) {
+  App.menuHidden = !!hide; store.set('menuHidden', App.menuHidden);
+  if (!renderer.xr.isPresenting || (window.KBDrive && KBDrive.active)) return;
+  uiMesh.visible = !App.menuHidden;
+  if (!App.menuHidden) { const head = xrHead(), f = xrForward(); uiMesh.position.copy(head).addScaledVector(f, 0.85); uiMesh.position.y = head.y - 0.12; uiMesh.lookAt(head); drawXRPanel(); }
+  else toast('Menu hidden. Tap the button on your left wrist to bring it back.', 5000);
+}
+function driveFromHeadset() { loadDrive().then(() => KBDrive.open()).catch(e => toast('Drive mode: ' + e.message + '.', 7000)); }
+function inviteFromHeadset() { loadHang().then(() => KBHang.invite()).then(() => { App.uiDirty = true; }).catch(e => toast('Hangout: ' + e.message + '.', 7000)); }
+const wristTex = [false, true].map(hot => {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128; const c = cv.getContext('2d');
+  c.beginPath(); c.arc(64, 64, 60, 0, Math.PI * 2); c.fillStyle = hot ? '#D2342B' : 'rgba(32,38,43,0.95)'; c.fill(); c.lineWidth = 6; c.strokeStyle = '#E9E6DF'; c.stroke();
+  c.fillStyle = '#E9E6DF'; for (const y of [40, 58, 76]) c.fillRect(38, y, 52, 8);
+  c.font = '700 22px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.fillText('MENU', 64, 108);
+  return new THREE.CanvasTexture(cv);
+});
+const wristBtn = new THREE.Mesh(new THREE.CircleGeometry(0.027, 28), new THREE.MeshBasicMaterial({ map: wristTex[0], transparent: true, depthTest: false }));
+wristBtn.visible = false; wristBtn.renderOrder = 31; scene.add(wristBtn);
+let wristArmed = true, wristAt = 0;
+function wristClick(e) { // pointing at the wrist button and clicking (trigger or pinch)
+  if (!wristBtn.visible) return false;
+  rayFrom(e.target); if (!raycaster.intersectObject(wristBtn, false)[0]) return false;
+  setMenuHidden(!App.menuHidden); return true;
+}
+// Your own hands, as gloves, in the pit garage (in your own room you can see your real ones).
+const gloveMat = new THREE.MeshLambertMaterial({ color: 0xdcd7cc }), gloveDark = new THREE.MeshLambertMaterial({ color: 0xd2342b });
+const jointGeo = new THREE.SphereGeometry(1, 10, 8), boneGeo = new THREE.CylinderGeometry(1, 1, 1, 8), UPV = new THREE.Vector3(0, 1, 0);
+// WebXR's 25 hand joints: 0 wrist, then thumb (4), index, middle, ring and little finger (5 each)
+const BONES = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [8, 9], [0, 10], [10, 11], [11, 12], [12, 13], [13, 14], [0, 15], [15, 16], [16, 17], [17, 18], [18, 19], [0, 20], [20, 21], [21, 22], [22, 23], [23, 24], [1, 5], [5, 10], [10, 15], [15, 20], [6, 11], [11, 16], [16, 21]];
+const handRigs = [0, 1].map(() => {
+  const g = new THREE.Group(), tracked = new THREE.Group(), glove = new THREE.Group(); g.visible = false; g.add(tracked, glove); scene.add(g);
+  const joints = [], bones = [], pts = [], rad = [];
+  for (let i = 0; i < 25; i++) { const m = new THREE.Mesh(jointGeo, i === 0 ? gloveDark : gloveMat); tracked.add(m); joints.push(m); pts.push(new THREE.Vector3()); rad.push(0.008); }
+  for (let i = 0; i < BONES.length; i++) { const m = new THREE.Mesh(boneGeo, gloveMat); tracked.add(m); bones.push(m); }
+  // holding a controller: a simple closed glove around the grip
+  const part = (w, h, d, x, y, z, mat) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat || gloveMat); m.position.set(x, y, z); glove.add(m); return m; };
+  part(0.085, 0.045, 0.1, 0, 0, 0.01); part(0.08, 0.04, 0.045, 0, -0.03, -0.045); part(0.09, 0.05, 0.03, 0, 0, 0.075, gloveDark);
+  const thumb = part(0.025, 0.03, 0.07, 0.05, 0.01, -0.01);
+  return { g, tracked, glove, joints, bones, pts, rad, thumb };
+});
+const _bv = new THREE.Vector3(), _bq = new THREE.Quaternion(), _bp = new THREE.Vector3();
+function drawTrackedHand(rig, hand, frame, ref) {
+  let k = 0;
+  for (const joint of hand.values()) {
+    if (k >= 25) break;
+    const jp = frame.getJointPose(joint, ref); if (!jp) { rig.g.visible = false; return; }
+    const p = jp.transform.position, r = Math.max(0.006, Math.min(0.013, jp.radius || 0.008));
+    rig.pts[k].set(p.x, p.y, p.z); rig.rad[k] = r; rig.joints[k].position.copy(rig.pts[k]); rig.joints[k].scale.setScalar(k === 0 ? 0.02 : r * 1.05); k++;
+  }
+  if (k < 25) { rig.g.visible = false; return; }
+  BONES.forEach(([a, b], n) => {
+    const m = rig.bones[n], A = rig.pts[a], B = rig.pts[b]; _bv.copy(B).sub(A); const len = _bv.length();
+    if (len < 1e-4) { m.visible = false; return; }
+    m.visible = true; m.position.copy(A).addScaledVector(_bv, 0.5); m.quaternion.setFromUnitVectors(UPV, _bv.multiplyScalar(1 / len));
+    const r = Math.min(rig.rad[a], rig.rad[b]) * (n >= 24 || a === 0 ? 1.25 : 1); m.scale.set(r, len, r);
+  });
+  rig.g.visible = true; rig.tracked.visible = true; rig.glove.visible = false;
+}
+function xrBodyTick(frame, dt) {
+  const xr = renderer.xr.isPresenting, now = performance.now(), driving = !!(window.KBDrive && KBDrive.active);
+  if (xtMesh.visible) {
+    if (!xr || now > xtUntil) xtMesh.visible = false;
+    else { const head = xrHead(), f = xrForward(); _bp.copy(head).addScaledVector(f, 0.8); _bp.y = head.y - 0.24; if (xtFresh) { xtMesh.position.copy(_bp); xtFresh = false; } else xtMesh.position.lerp(_bp, Math.min(1, dt * 4)); xtMesh.lookAt(head); }
+  }
+  const session = xr ? renderer.xr.getSession() : null, ref = xr ? renderer.xr.getReferenceSpace() : null;
+  if (!session || !ref || !frame) { wristBtn.visible = false; handRigs[0].g.visible = handRigs[1].g.visible = false; return; }
+  if (App.menuHidden && uiMesh.visible && !driving) uiMesh.visible = false;
+  const showHands = !driving && App.env === 'garage';
+  let left = null, poke = null, n = 0;
+  for (const src of session.inputSources) {
+    const side = src.handedness;
+    if (src.hand && frame.getJointPose) {
+      const wj = src.hand.get('wrist'), wp = wj && frame.getJointPose(wj, ref);
+      if (side === 'left' && wp) left = { t: wp.transform, up: 0.035, back: 0.035 };
+      if (side === 'right') { const tj = src.hand.get('index-finger-tip'), tp = tj && frame.getJointPose(tj, ref); if (tp) poke = tp.transform.position; }
+      if (showHands && n < 2 && src.hand.values) drawTrackedHand(handRigs[n++], src.hand, frame, ref);
+    } else if (src.gripSpace) {
+      const gp = frame.getPose(src.gripSpace, ref); if (!gp) continue;
+      if (side === 'left') left = { t: gp.transform, up: 0.035, back: 0.11 };
+      if (showHands && n < 2) {
+        const rig = handRigs[n++], p = gp.transform.position, q = gp.transform.orientation;
+        rig.glove.position.set(p.x, p.y, p.z); rig.glove.quaternion.set(q.x, q.y, q.z, q.w); rig.thumb.position.x = side === 'left' ? 0.05 : -0.05;
+        rig.g.visible = true; rig.glove.visible = true; rig.tracked.visible = false;
+      }
+    }
+  }
+  for (; n < 2; n++) handRigs[n].g.visible = false;
+  // wrist button: on the back of your left wrist; with no left hand in view it waits low in front of you
+  wristBtn.visible = !driving;
+  if (!wristBtn.visible) return;
+  const head = xrHead();
+  if (left) {
+    const p = left.t.position, q = left.t.orientation; _bq.set(q.x, q.y, q.z, q.w);
+    wristBtn.position.set(p.x, p.y, p.z).addScaledVector(_bv.set(0, 1, 0).applyQuaternion(_bq), left.up).addScaledVector(_bv.set(0, 0, 1).applyQuaternion(_bq), left.back);
+  } else if (App.menuHidden) { const f = xrForward(); wristBtn.position.copy(head).addScaledVector(f, 0.5); wristBtn.position.y = head.y - 0.42; }
+  else { wristBtn.visible = false; return; }
+  wristBtn.lookAt(head);
+  // touching it with your right index finger presses it (hand tracking); with controllers, point and click
+  const d = poke && left ? Math.hypot(poke.x - wristBtn.position.x, poke.y - wristBtn.position.y, poke.z - wristBtn.position.z) : 9;
+  if (d < 0.03 && wristArmed && now - wristAt > 700) { wristArmed = false; wristAt = now; setMenuHidden(!App.menuHidden); }
+  else if (d > 0.07) wristArmed = true;
+  const tex = wristTex[d < 0.06 ? 1 : 0]; if (wristBtn.material.map !== tex) { wristBtn.material.map = tex; wristBtn.material.needsUpdate = true; }
 }
 let hitSource = null;
 async function enterXR() {
@@ -2128,7 +2266,7 @@ async function enterXR() {
       layoutModel(); resize(); $('#xrBtn').textContent = App.arOK ? 'Enter mixed reality' : 'Enter VR';
     });
     App.placed = false; App.placing = App.view !== 'trackside';
-    uiMesh.visible = true;
+    uiMesh.visible = !App.menuHidden;
     $('#xrBtn').textContent = 'Exit headset view';
     setTimeout(() => { if (App.view === 'trackside') { const h = xrHead(); App.tsBase.set(h.x, 0, h.z); layoutModel(); } positionPanels(); }, 400);
     toast(App.placing ? 'Point at a table and pull the trigger (or pinch) to place the circuit.' : 'Use the panel to change views.', 6000);
@@ -2152,7 +2290,7 @@ function xrTick(frame, dt) {
   if (hc !== App.hoverChase) { App.hoverChase = hc; drawChaseLabel(); }
   if (App.view !== 'trackside') placementTick(frame); else reticle.visible = false;
   const session = renderer.xr.getSession();
-  if (session && (panelView())) {
+  if (session && App.sticks && (panelView())) {
     App.flick = App.flick || {};
     for (const src of session.inputSources) {
       const gp = src.gamepad; if (!gp || gp.axes.length < 4 || src.handedness !== 'left') continue;
@@ -2163,7 +2301,7 @@ function xrTick(frame, dt) {
       else if (Math.abs(ax) < 0.3) App.flick.left = true;
     }
   }
-  if (session && App.view !== 'trackside' && App.placed) {
+  if (session && App.sticks && App.view !== 'trackside' && App.placed) { // thumbsticks are off unless switched on in the menu
     for (const src of session.inputSources) {
       const gp = src.gamepad; if (!gp || gp.axes.length < 4) continue;
       const ax = Math.abs(gp.axes[2]) > 0.15 ? gp.axes[2] : 0, ay = Math.abs(gp.axes[3]) > 0.15 ? gp.axes[3] : 0;
@@ -2245,6 +2383,7 @@ function frameBody(time, frame) {
   if (window.KBGarage) KBGarage.frame(dt);
   if (window.KBPoker) KBPoker.frame(dt, frame);
   if (window.KBWeather) KBWeather.frame(dt);
+  xrBodyTick(frame, dt);
   if (window.KBDrive && KBDrive.active) { KBDrive.frame(dt, frame); return; }
   if (App.source === 'replay') Replay.tick(dt);
   if (App.source === 'live') Live.tick();
@@ -2377,6 +2516,7 @@ setPanels(true, !narrow()); // menu open on every screen size; on phones the ord
 
 /* ---- Drive mode (separate file, loaded on first use) ---- */
 window.KB = {
+  _vr: () => ({ wristBtn, handRigs, xtMesh, setMenuHidden }),
   THREE, App, $, store, toast, OF1, isoMs, iso, hexColor, lastLE, rr,
   scene, renderer, camera, modelGroup, realWorld, REAL, onLayer, sky, modelGround, FOG, BG,
   CarGeo, darkMat, CAR_LEN, labelSprite, modelCarLen, Cars, Replay, Live, orbit, flatCamTick,
@@ -2387,7 +2527,7 @@ window.KB = {
 (function loadWeather() { // circuit weather: menu section, table sign, alerts
   const sc = document.createElement('script'); sc.src = 'forecast-panel.js?v=4'; sc.async = true; document.head.appendChild(sc);
 })();
-const DRIVE_VER = '4'; // bump whenever drive.js changes, so devices don't keep an old copy
+const DRIVE_VER = '5'; // bump whenever drive.js changes, so devices don't keep an old copy
 let driveLoading = null;
 function loadDrive() {
   if (window.KBDrive) return Promise.resolve();
@@ -2404,8 +2544,8 @@ document.querySelectorAll('#lookSeg button').forEach(b => b.onclick = () => setL
 $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
-const HANG_VER = '4';
-const POKER_VER = '2';
+const HANG_VER = '5';
+const POKER_VER = '3';
 let pokerLoading = null;
 window.KBLoadPoker = function loadPoker() { // poker and race bets, for people in a hangout
   if (window.KBPoker) return Promise.resolve();
