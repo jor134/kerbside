@@ -223,7 +223,7 @@ if (!window.KB) return; // loaded for testing only
 /* =====================================================================
    Game: everything that touches the page, the 3D scene or the headset
    ===================================================================== */
-const DRIVE_BUILD = 5;
+const DRIVE_BUILD = 6;
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const Sim = makeSim(THREE);
 const { clamp, wrapA, wrapD } = Sim;
@@ -1454,7 +1454,7 @@ const Drive = {
     KB.setGhostPost(null);
     if (renderer.xr.isPresenting) { KB.uiMesh.visible = true; for (const c of KB.controllers) c.userData.line.visible = true; KB.positionPanels(); }
   },
-  frame, onSelect: onSelectXR,
+  frame, onSelect: onSelectXR, recenter,
   allowMapGestures() { return D.view === 'rc'; },
   _D: D, _Sim: Sim, _menu: () => xmHits, _net: Net
 };

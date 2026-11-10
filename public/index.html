@@ -2056,7 +2056,7 @@ function drawXRPanel() {
   btn(100, y7, 130, '⟲ Turn', false, () => turnBy(Math.PI / 12)); btn(240, y7, 130, 'Turn ⟳', false, () => turnBy(-Math.PI / 12));
   btn(380, y7, 130, 'Smaller', false, () => sizeBy(1 / 1.15)); btn(520, y7, 130, 'Bigger', false, () => sizeBy(1.15));
   c.font = '500 18px Barlow, sans-serif';
-  c.fillText('Hidden menu: tap the button on your left', 668, y7 + 26); c.fillText('wrist (or point at it and click) to show it.', 668, y7 + 50);
+  c.fillText('Left wrist: show or hide this menu.', 668, y7 + 26); c.fillText('Right wrist: reset the view to where you are.', 668, y7 + 50);
   if (SAT.attrib) { c.font = '400 18px Barlow, sans-serif'; c.fillStyle = '#94A1A8'; c.fillText(SAT.attrib, 32, UIH - 12); }
   App.uiHits = hits; uiTex.needsUpdate = true;
 }
@@ -2155,20 +2155,39 @@ function setMenuHidden(hide) {
 }
 function driveFromHeadset() { loadDrive().then(() => KBDrive.open()).catch(e => toast('Drive mode: ' + e.message + '.', 7000)); }
 function inviteFromHeadset() { loadHang().then(() => KBHang.invite()).then(() => { App.uiDirty = true; }).catch(e => toast('Hangout: ' + e.message + '.', 7000)); }
-const wristTex = [false, true].map(hot => {
+const wristFace = (label, icon) => [false, true].map(hot => {
   const cv = document.createElement('canvas'); cv.width = cv.height = 128; const c = cv.getContext('2d');
   c.beginPath(); c.arc(64, 64, 60, 0, Math.PI * 2); c.fillStyle = hot ? '#D2342B' : 'rgba(32,38,43,0.95)'; c.fill(); c.lineWidth = 6; c.strokeStyle = '#E9E6DF'; c.stroke();
-  c.fillStyle = '#E9E6DF'; for (const y of [40, 58, 76]) c.fillRect(38, y, 52, 8);
-  c.font = '700 22px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.fillText('MENU', 64, 108);
+  c.fillStyle = c.strokeStyle = '#E9E6DF'; icon(c);
+  c.font = '700 22px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.fillText(label, 64, 108);
   return new THREE.CanvasTexture(cv);
 });
+const wristTex = wristFace('MENU', c => { for (const y of [40, 58, 76]) c.fillRect(38, y, 52, 8); });
+// Right wrist: reset the view, so that whatever you're doing is centred on where you are and facing now.
+const resetTex = wristFace('RESET', c => { c.lineWidth = 7; c.beginPath(); c.arc(64, 56, 24, 0, Math.PI * 2); c.stroke(); c.fillRect(60, 22, 8, 22); c.fillRect(60, 68, 8, 22); c.fillRect(30, 52, 22, 8); c.fillRect(76, 52, 22, 8); });
+const resetBtn = new THREE.Mesh(new THREE.CircleGeometry(0.027, 28), new THREE.MeshBasicMaterial({ map: resetTex[0], transparent: true, depthTest: false }));
+resetBtn.visible = false; resetBtn.renderOrder = 31; scene.add(resetBtn);
+let resetArmed = true, resetAt = 0;
+function resetView() {
+  if (!renderer.xr.isPresenting) return;
+  if (window.KBDrive && KBDrive.active) { if (KBDrive.recenter) KBDrive.recenter(); toast('View recentred.', 2500); return; }
+  if (window.KBPoker && KBPoker.seat && KBPoker.seat() >= 0 && window.KBGarage && KBGarage.seated() >= 0) { KBPoker.placeHere(); return; } // at the poker table: your seat is where you are
+  if (window.KBGarage && KBGarage.atPitwall && KBGarage.atPitwall()) { KBGarage.setAway(false); setTimeout(() => KBGarage.setAway(true), 120); toast('View reset.', 2500); return; } // step back onto the same spot
+  if (App.view !== 'trackside') { // the table (and the garage around it) moves in front of you, at the height it was
+    const head = xrHead(), f = xrForward(), y = App.placed ? App.anchor.y : Math.max(0.3, head.y - 0.55);
+    placeTabletop(head.clone().addScaledVector(f, 0.7).setY(y));
+  } else { App.tsBase.set(xrHead().x, 0, xrHead().z); layoutModel(); positionPanels(); }
+  if (!App.menuHidden) uiMesh.visible = true;
+  toast('View reset: the table is in front of you.', 3000);
+}
 const wristBtn = new THREE.Mesh(new THREE.CircleGeometry(0.027, 28), new THREE.MeshBasicMaterial({ map: wristTex[0], transparent: true, depthTest: false }));
 wristBtn.visible = false; wristBtn.renderOrder = 31; scene.add(wristBtn);
 let wristArmed = true, wristAt = 0;
-function wristClick(e) { // pointing at the wrist button and clicking (trigger or pinch)
-  if (!wristBtn.visible) return false;
-  rayFrom(e.target); if (!raycaster.intersectObject(wristBtn, false)[0]) return false;
-  setMenuHidden(!App.menuHidden); return true;
+function wristClick(e) { // pointing at a wrist button and clicking (trigger or pinch)
+  rayFrom(e.target);
+  if (wristBtn.visible && raycaster.intersectObject(wristBtn, false)[0]) { setMenuHidden(!App.menuHidden); return true; }
+  if (resetBtn.visible && raycaster.intersectObject(resetBtn, false)[0]) { resetView(); return true; }
+  return false;
 }
 // Your own hands, as gloves, in the pit garage (in your own room you can see your real ones).
 const gloveMat = new THREE.MeshLambertMaterial({ color: 0xdcd7cc }), gloveDark = new THREE.MeshLambertMaterial({ color: 0xd2342b });
@@ -2211,20 +2230,22 @@ function xrBodyTick(frame, dt) {
     else { const head = xrHead(), f = xrForward(); _bp.copy(head).addScaledVector(f, 0.8); _bp.y = head.y - 0.24; if (xtFresh) { xtMesh.position.copy(_bp); xtFresh = false; } else xtMesh.position.lerp(_bp, Math.min(1, dt * 4)); xtMesh.lookAt(head); }
   }
   const session = xr ? renderer.xr.getSession() : null, ref = xr ? renderer.xr.getReferenceSpace() : null;
-  if (!session || !ref || !frame) { wristBtn.visible = false; handRigs[0].g.visible = handRigs[1].g.visible = false; return; }
+  if (!session || !ref || !frame) { wristBtn.visible = resetBtn.visible = false; handRigs[0].g.visible = handRigs[1].g.visible = false; return; }
   if (App.menuHidden && uiMesh.visible && !driving) uiMesh.visible = false;
   const showHands = !driving && App.env === 'garage';
-  let left = null, poke = null, n = 0;
+  let left = null, poke = null, right = null, pokeL = null, n = 0;
   for (const src of session.inputSources) {
     const side = src.handedness;
     if (src.hand && frame.getJointPose) {
       const wj = src.hand.get('wrist'), wp = wj && frame.getJointPose(wj, ref);
       if (side === 'left' && wp) left = { t: wp.transform, up: 0.035, back: 0.035 };
-      if (side === 'right') { const tj = src.hand.get('index-finger-tip'), tp = tj && frame.getJointPose(tj, ref); if (tp) poke = tp.transform.position; }
+      if (side === 'right' && wp) right = { t: wp.transform, up: 0.035, back: 0.035 };
+      const tj = src.hand.get('index-finger-tip'), tp = tj && frame.getJointPose(tj, ref);
+      if (tp && side === 'right') poke = tp.transform.position; else if (tp && side === 'left') pokeL = tp.transform.position;
       if (showHands && n < 2 && src.hand.values) drawTrackedHand(handRigs[n++], src.hand, frame, ref);
     } else if (src.gripSpace) {
       const gp = frame.getPose(src.gripSpace, ref); if (!gp) continue;
-      if (side === 'left') left = { t: gp.transform, up: 0.035, back: 0.11 };
+      if (side === 'left') left = { t: gp.transform, up: 0.035, back: 0.11 }; else if (side === 'right') right = { t: gp.transform, up: 0.035, back: 0.11 };
       if (showHands && n < 2) {
         const rig = handRigs[n++], p = gp.transform.position, q = gp.transform.orientation;
         rig.glove.position.set(p.x, p.y, p.z); rig.glove.quaternion.set(q.x, q.y, q.z, q.w); rig.thumb.position.x = side === 'left' ? 0.05 : -0.05;
@@ -2234,9 +2255,20 @@ function xrBodyTick(frame, dt) {
   }
   for (; n < 2; n++) handRigs[n].g.visible = false;
   // wrist button: on the back of your left wrist; with no left hand in view it waits low in front of you
+  const head = xrHead();
+  // reset button: back of your right wrist, pressed with your left index finger (or point and click)
+  resetBtn.visible = !!right;
+  if (right) {
+    const p = right.t.position, q = right.t.orientation; _bq.set(q.x, q.y, q.z, q.w);
+    resetBtn.position.set(p.x, p.y, p.z).addScaledVector(_bv.set(0, 1, 0).applyQuaternion(_bq), right.up).addScaledVector(_bv.set(0, 0, 1).applyQuaternion(_bq), right.back);
+    resetBtn.lookAt(head);
+    const dr = pokeL ? Math.hypot(pokeL.x - resetBtn.position.x, pokeL.y - resetBtn.position.y, pokeL.z - resetBtn.position.z) : 9;
+    if (dr < 0.03 && resetArmed && now - resetAt > 1200) { resetArmed = false; resetAt = now; resetView(); }
+    else if (dr > 0.07) resetArmed = true;
+    const rt = resetTex[dr < 0.06 ? 1 : 0]; if (resetBtn.material.map !== rt) { resetBtn.material.map = rt; resetBtn.material.needsUpdate = true; }
+  }
   wristBtn.visible = !driving;
   if (!wristBtn.visible) return;
-  const head = xrHead();
   if (left) {
     const p = left.t.position, q = left.t.orientation; _bq.set(q.x, q.y, q.z, q.w);
     wristBtn.position.set(p.x, p.y, p.z).addScaledVector(_bv.set(0, 1, 0).applyQuaternion(_bq), left.up).addScaledVector(_bv.set(0, 0, 1).applyQuaternion(_bq), left.back);
@@ -2516,7 +2548,7 @@ setPanels(true, !narrow()); // menu open on every screen size; on phones the ord
 
 /* ---- Drive mode (separate file, loaded on first use) ---- */
 window.KB = {
-  _vr: () => ({ wristBtn, handRigs, xtMesh, setMenuHidden }),
+  _vr: () => ({ wristBtn, resetBtn, handRigs, xtMesh, setMenuHidden, resetView }),
   THREE, App, $, store, toast, OF1, isoMs, iso, hexColor, lastLE, rr,
   scene, renderer, camera, modelGroup, realWorld, REAL, onLayer, sky, modelGround, FOG, BG,
   CarGeo, darkMat, CAR_LEN, labelSprite, modelCarLen, Cars, Replay, Live, orbit, flatCamTick,
@@ -2527,7 +2559,7 @@ window.KB = {
 (function loadWeather() { // circuit weather: menu section, table sign, alerts
   const sc = document.createElement('script'); sc.src = 'forecast-panel.js?v=4'; sc.async = true; document.head.appendChild(sc);
 })();
-const DRIVE_VER = '5'; // bump whenever drive.js changes, so devices don't keep an old copy
+const DRIVE_VER = '6'; // bump whenever drive.js changes, so devices don't keep an old copy
 let driveLoading = null;
 function loadDrive() {
   if (window.KBDrive) return Promise.resolve();
@@ -2545,7 +2577,7 @@ $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
 const HANG_VER = '5';
-const POKER_VER = '3';
+const POKER_VER = '4';
 let pokerLoading = null;
 window.KBLoadPoker = function loadPoker() { // poker and race bets, for people in a hangout
   if (window.KBPoker) return Promise.resolve();

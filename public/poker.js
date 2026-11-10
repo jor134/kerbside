@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 3;
+const POKER_BUILD = 4;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -574,5 +574,5 @@ const Race = {
   bet(opt, amt) { const m = raceMarket(); if (m && m.status === 'open') placeBet(m.id, String(opt), amt); },
   staked(opt) { const m = raceMarket(); return m ? m.bets.filter(b => b.pid === KBHang.pid() && (opt == null || b.opt === String(opt))).reduce((a, b) => a + b.amt, 0) : 0; }
 };
-window.KBPoker = { onMsg, frame, onSelect, open: openUI, lookChanged, build: POKER_BUILD, race: Race, bal: () => P.bal, _P: P, _hand: handLabel, _T: () => T3, _held: () => ({ kind: held.kind, denom: held.denom, near: nearSomething, hands: [...hands.values()] }) };
+window.KBPoker = { onMsg, frame, onSelect, placeHere, seat: () => P.mySeat, open: openUI, lookChanged, build: POKER_BUILD, race: Race, bal: () => P.bal, _P: P, _hand: handLabel, _T: () => T3, _held: () => ({ kind: held.kind, denom: held.denom, near: nearSomething, hands: [...hands.values()] }) };
 })();
