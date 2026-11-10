@@ -8,20 +8,20 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 10;
+const GARAGE_BUILD = 11;
 
 /* ---------------- Materials ---------------- */
-const toon = c => new THREE.MeshToonMaterial({ color: c });
-const paint = c => new THREE.MeshToonMaterial({ color: c, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
+const toon = (c, gloss) => KBMat({ color: c }, gloss);
+const paint = c => KBMat({ color: c, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }, 'plastic');
 const M = {
-  floor: toon(0xb7bcc0), line: paint(0xe8c33a), white: toon(0xeeeeea), paintWhite: paint(0xeeeeea), wall: toon(0x353d43), back: toon(0x2a3136),
-  ceil: toon(0x22282c), steel: toon(0x6f7a82), dark: toon(0x1c1f22), rubber: toon(0x17191b), asphalt: toon(0x3b4349),
-  grass: toon(0x5b8a4e), concrete: toon(0x9aa1a6), stand: toon(0x7d8c99), roof: toon(0xeef0f1),
+  floor: toon(0xb7bcc0, 'polished'), line: paint(0xe8c33a), white: toon(0xeeeeea, 'plastic'), paintWhite: paint(0xeeeeea), wall: toon(0x353d43), back: toon(0x2a3136),
+  ceil: toon(0x22282c), steel: toon(0x6f7a82, 'metal'), dark: toon(0x1c1f22, 'carbon'), rubber: toon(0x17191b, 'matte'), asphalt: toon(0x3b4349, 'asphalt'),
+  grass: toon(0x5b8a4e, 'matte'), concrete: toon(0x9aa1a6, 'matte'), stand: toon(0x7d8c99), roof: toon(0xeef0f1, 'metal'),
   glow: new THREE.MeshBasicMaterial({ color: 0xf4f6f8 }), screenOff: new THREE.MeshBasicMaterial({ color: 0x0e1215 }),
   inWall: toon(0x353d43), inBack: toon(0x2a3136) // your own garage's walls, so the casino look doesn't repaint the whole pit row
 };
-let teamMat = toon(0xd2342b);
-const garageDark = toon(0x1c1f22);
+let teamMat = toon(0xd2342b, 'paint');
+const garageDark = toon(0x1c1f22, 'carbon');
 function outsideWindow(mat) { // don't draw this where the window is
   mat.stencilWrite = true; mat.stencilWriteMask = 0x00; mat.stencilRef = 1; mat.stencilFuncMask = 0xff;
   mat.stencilFunc = THREE.NotEqualStencilFunc;
@@ -224,7 +224,7 @@ function neonText(text, color, w, h) {
 }
 function buildCasino() {
   const g = new THREE.Group(); g.name = 'casino'; g.visible = false;
-  const gold = toon(0xc9a13b), felt = toon(0x0f6b3a), wood = toon(0x4a2516), red = toon(0x9e1b2c), black = toon(0x141012);
+  const gold = toon(0xc9a13b, 'metal'), felt = toon(0x0f6b3a, 'matte'), wood = toon(0x4a2516, 'polished'), red = toon(0x9e1b2c, 'plastic'), black = toon(0x141012, 'plastic');
   // carpet
   const carpet = canvasTex(256, 256, (c, w) => {
     c.fillStyle = '#5a0f1c'; c.fillRect(0, 0, w, w);
@@ -436,10 +436,10 @@ drawCamLabel(SCR.cam[0], null); drawCamLabel(SCR.cam[1], null);
 // the pits (or far off the racing line) use the pit lane instead: the fast lane while moving, and the
 // working lane in front of the garages while stopped for their stop.
 const bodyMats = new Map();
-const trafficDark = toon(0x1c1f22);
+const trafficDark = toon(0x1c1f22, 'carbon');
 function trafficCar(car) {
   const g = new THREE.Group();
-  let bm = bodyMats.get(car.color); if (!bm) { bm = outsideWindow(toon(car.color)); bodyMats.set(car.color, bm); }
+  let bm = bodyMats.get(car.color); if (!bm) { bm = outsideWindow(toon(car.color, 'paint')); bodyMats.set(car.color, bm); }
   g.add(new THREE.Mesh(KB.CarGeo.body, bm), new THREE.Mesh(KB.CarGeo.dark, trafficDark), new THREE.Mesh(KB.CarGeo.post, trafficDark));
   return { g, color: car.color, x: 0, z: 0, vx: 0, vz: 0, on: false, slow: 0 };
 }

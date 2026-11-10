@@ -90,6 +90,10 @@ Under View → Surroundings, choose **Pit garage** for a fully virtual team gara
 - **Cars.** Every car within about 270 m of the start/finish line drives past full size at its real speed, from the live or replay positions. Cars the timing shows in the pits use the pit lane, and stop in the working lane for their stop, at their real place along the pit lane.
 - In a hangout, the host's choice of surroundings applies to everyone. The TV window and where you stand (garage or pitwall) stay personal; friends see you on the pitwall when you go there.
 
+### Shine and reflections
+
+Surfaces have their own finish: car paint and helmets are glossy and mirror a sky with studio lights, glass and metal reflect, the garage floor is polished, asphalt has a faint sheen, and grass, felt and rubber stay matte. Satellite photos and screens are unchanged. If the headset's frame rate drops, switch **Shine and reflections** off under Surroundings.
+
 ### In the headset
 
 - **Menu.** **Hide menu** puts the menu away. A round **MENU** button sits on the back of your left wrist: touch it with your right index finger (hand tracking), or point at it and click (controllers), and the menu appears in front of you. With no left hand in view while the menu is hidden, the button waits low in front of you.

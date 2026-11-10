@@ -223,7 +223,7 @@ if (!window.KB) return; // loaded for testing only
 /* =====================================================================
    Game: everything that touches the page, the 3D scene or the headset
    ===================================================================== */
-const DRIVE_BUILD = 6;
+const DRIVE_BUILD = 7;
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const Sim = makeSim(THREE);
 const { clamp, wrapA, wrapD } = Sim;
@@ -253,8 +253,8 @@ const D = {
 /* ---------------- Car meshes ---------------- */
 function carGroup(color, opacity) {
   const g = new THREE.Group(), t = opacity < 1;
-  g.add(new THREE.Mesh(KB.CarGeo.body, new THREE.MeshToonMaterial({ color, transparent: t, opacity, depthWrite: !t })));
-  const darkM = t ? new THREE.MeshToonMaterial({ color: 0x1c1f22, transparent: true, opacity, depthWrite: false }) : KB.darkMat;
+  g.add(new THREE.Mesh(KB.CarGeo.body, KBMat({ color, transparent: t, opacity, depthWrite: !t }, t ? 'matte' : 'paint')));
+  const darkM = t ? KBMat({ color: 0x1c1f22, transparent: true, opacity, depthWrite: false }, 'matte') : KB.darkMat;
   g.add(new THREE.Mesh(KB.CarGeo.dark, darkM));
   const post = new THREE.Mesh(KB.CarGeo.post, darkM); g.add(post); g.userData.post = post;
   return g;
@@ -302,7 +302,7 @@ function boardTexture(n) {
 // Game-sized: about 3 × 1.9 m on two 2.4 m legs, so they read from 200 m away. The number is printed
 // on the front of a single block (no separate panel that could flicker into the backing at table scale).
 const boardGeo = new THREE.BoxGeometry(3.0, 1.9, 0.12), legGeo = new THREE.BoxGeometry(0.14, 2.4, 0.14);
-const boardDarkMat = new THREE.MeshToonMaterial({ color: 0x2a2f33 });
+const boardDarkMat = KBMat({ color: 0x2a2f33 }, 'satin');
 const boardFaceMat = {};
 function boardMesh(n) {
   const face = boardFaceMat[n] || (boardFaceMat[n] = new THREE.MeshBasicMaterial({ map: boardTexture(n) }));
@@ -878,8 +878,8 @@ function updateVignette(dt) {
 /* ---------------- Steering wheel (headset) ---------------- */
 const wheel = (() => {
   const g = new THREE.Group();
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.016, 8, 32), new THREE.MeshToonMaterial({ color: 0x24292d }));
-  const hub = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.06, 0.03), new THREE.MeshToonMaterial({ color: 0xd2342b }));
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.016, 8, 32), KBMat({ color: 0x24292d }, 'carbon'));
+  const hub = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.06, 0.03), KBMat({ color: 0xd2342b }, 'plastic'));
   g.add(rim, hub); g.visible = false; scene.add(g); return g;
 })();
 

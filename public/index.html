@@ -202,6 +202,7 @@ body:not(.board-open) #board{display:none}
     </div>
     <label class="check" style="margin-top:10px"><input type="checkbox" id="trackChk"> Draw the track</label>
     <label class="check" style="margin-top:10px"><input type="checkbox" id="sceneryChk"> Grandstands and buildings</label>
+    <label class="check" style="margin-top:10px"><input type="checkbox" id="glossChk"> Shine and reflections</label>
     <label style="margin-top:10px">Satellite imagery<select id="satSel">
       <option value="off">Off</option><option value="esri">Esri World Imagery</option><option value="maptiler">MapTiler Satellite</option>
     </select></label>
@@ -505,7 +506,41 @@ chaseCam.layers.set(3);
 const REAL = 3;
 function onLayer(o, n) { o.traverse(c => c.layers.set(n)); return o; }
 
-const hemi = new THREE.HemisphereLight(0xe4edf3, 0x46553f, 0.8); hemi.layers.enableAll(); scene.add(hemi);
+/* ================= Surfaces: shine and reflections ================= */
+// Every lit surface is made here. Each kind of surface gets its own shine (how tight and bright the
+// highlight from the sun is) and how much of the surroundings it mirrors. Reflections come from one small
+// built-in picture of a sky with studio lights, so they cost almost nothing in the headset.
+const GLOSS = { // shininess, highlight brightness (0-1), reflection strength
+  paint: [110, 0.75, 0.32], glass: [140, 1.0, 0.5], metal: [70, 0.7, 0.28], carbon: [55, 0.4, 0.14], polished: [45, 0.45, 0.18],
+  plastic: [40, 0.35, 0.1], satin: [22, 0.16, 0.04], asphalt: [10, 0.1, 0], matte: [4, 0.02, 0]
+};
+const envMap = (() => {
+  const face = (k) => { // 0 +x, 1 -x, 2 +y (up), 3 -y (down), 4 +z, 5 -z
+    const cv = document.createElement('canvas'); cv.width = cv.height = 64; const c = cv.getContext('2d');
+    if (k === 2) { c.fillStyle = '#5d7386'; c.fillRect(0, 0, 64, 64); c.fillStyle = '#ffffff'; c.fillRect(8, 14, 48, 9); c.fillRect(8, 40, 48, 9); } // sky with two light strips overhead
+    else if (k === 3) { c.fillStyle = '#16191b'; c.fillRect(0, 0, 64, 64); }
+    else { const g = c.createLinearGradient(0, 0, 0, 64); g.addColorStop(0, '#5d7386'); g.addColorStop(0.46, '#c9d6de'); g.addColorStop(0.52, '#3a4247'); g.addColorStop(1, '#16191b'); c.fillStyle = g; c.fillRect(0, 0, 64, 64);
+      if (k === 0 || k === 5) { c.fillStyle = '#ffffff'; c.fillRect(20, 8, 24, 12); } } // a bright panel on two sides
+    return cv;
+  };
+  const t = new THREE.CubeTexture([0, 1, 2, 3, 4, 5].map(face)); t.needsUpdate = true; return t;
+})();
+const glossMats = [];
+App.gloss = store.get('gloss', true);
+function applyGloss(m) {
+  const [shin, spec, refl] = GLOSS[m.userData.gloss] || GLOSS.satin, on = App.gloss;
+  m.shininess = on ? shin : 1; m.specular.setScalar(on ? spec : 0);
+  const env = on && refl > 0 ? envMap : null; if (m.envMap !== env) { m.envMap = env; m.needsUpdate = true; }
+  m.reflectivity = refl;
+}
+function KBMat(params, gloss) {
+  const m = new THREE.MeshPhongMaterial(Object.assign({ combine: THREE.AddOperation }, params));
+  m.userData.gloss = gloss || 'satin'; applyGloss(m); glossMats.push(m); return m;
+}
+window.KBMat = KBMat;
+function setGloss(on) { App.gloss = !!on; store.set('gloss', App.gloss); glossMats.forEach(applyGloss); const cb = document.getElementById('glossChk'); if (cb) cb.checked = App.gloss; }
+// a little more fill light than before: shaded sides now fall off smoothly instead of in two flat tones
+const hemi = new THREE.HemisphereLight(0xe4edf3, 0x46553f, 0.95); hemi.layers.enableAll(); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffffff, 0.85); sun.position.set(0.5, 1, 0.35); sun.layers.enableAll(); scene.add(sun);
 
 const modelGroup = new THREE.Group(); scene.add(modelGroup);
@@ -519,17 +554,17 @@ const skyMat = new THREE.ShaderMaterial({
 });
 const sky = new THREE.Mesh(new THREE.SphereGeometry(9000, 32, 16), skyMat);
 sky.renderOrder = -1; sky.layers.set(REAL); scene.add(sky);
-const grassMat = new THREE.MeshToonMaterial({ color: 0x5b8a4e });
+const grassMat = KBMat({ color: 0x5b8a4e }, 'matte');
 const realGround = new THREE.Mesh(new THREE.PlaneGeometry(40000, 40000), grassMat);
 realGround.rotation.x = -Math.PI / 2; realGround.position.y = -0.4; onLayer(realGround, REAL); realWorld.add(realGround);
 const modelGround = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), grassMat);
 modelGround.rotation.x = -Math.PI / 2; modelGround.position.y = -0.4; modelGround.visible = false; modelGroup.add(modelGround);
 
-const asphaltMat = new THREE.MeshToonMaterial({ color: 0x3b4349, side: THREE.DoubleSide });
-const lineMat = new THREE.MeshToonMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
-const slabMat = new THREE.MeshToonMaterial({ color: 0x5b8a4e });
-const slabEdgeMat = new THREE.MeshToonMaterial({ color: 0xa8916a, side: THREE.DoubleSide });
-const darkMat = new THREE.MeshToonMaterial({ color: 0x1c1f22 });
+const asphaltMat = KBMat({ color: 0x3b4349, side: THREE.DoubleSide }, 'asphalt');
+const lineMat = KBMat({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }, 'plastic');
+const slabMat = KBMat({ color: 0x5b8a4e }, 'matte');
+const slabEdgeMat = KBMat({ color: 0xa8916a, side: THREE.DoubleSide }, 'polished');
+const darkMat = KBMat({ color: 0x1c1f22 }, 'carbon');
 
 function ribbonGeo(tr, o0, o1, lift, colorAt) {
   const N = tr.N, pos = new Float32Array(N * 6), nor = new Float32Array(N * 6), col = colorAt ? new Float32Array(N * 6) : null, idx = [];
@@ -663,10 +698,10 @@ const CarGeo = (() => {
   for (const sx of [-1, 1]) { B(0.16, 0.07, 0.04, sx * 0.48, 0.76, 0.95, body); B(0.03, 0.12, 0.03, sx * 0.4, 0.7, 0.95, dark); }
   return { body: mergeGeos(body), dark: mergeGeos(dark), post: mergeGeos(post) };
 })();
-const postGhostMat = new THREE.MeshToonMaterial({ color: 0x1c1f22, transparent: true, opacity: 0.12, depthWrite: false });
+const postGhostMat = KBMat({ color: 0x1c1f22, transparent: true, opacity: 0.12, depthWrite: false }, 'matte');
 function carMesh(color) {
   const g = new THREE.Group();
-  g.add(new THREE.Mesh(CarGeo.body, new THREE.MeshToonMaterial({ color })));
+  g.add(new THREE.Mesh(CarGeo.body, KBMat({ color }, 'paint')));
   g.add(new THREE.Mesh(CarGeo.dark, darkMat));
   const post = new THREE.Mesh(CarGeo.post, darkMat); g.add(post); g.userData.post = post;
   return g;
@@ -814,10 +849,10 @@ function computeViewpoints(tr) {
 
 /* ---- Grandstands, pit building and surrounding buildings (procedural) ---- */
 let scenery = null;
-const standMat = new THREE.MeshToonMaterial({ color: 0x7d8c99 });
-const roofMat = new THREE.MeshToonMaterial({ color: 0xeef0f1 });
-const bldgMat = new THREE.MeshToonMaterial({ color: 0xe4e6e7 });
-const glassMat = new THREE.MeshToonMaterial({ color: 0x4a5a66 });
+const standMat = KBMat({ color: 0x7d8c99 }, 'satin');
+const roofMat = KBMat({ color: 0xeef0f1 }, 'metal');
+const bldgMat = KBMat({ color: 0xe4e6e7 }, 'satin');
+const glassMat = KBMat({ color: 0x4a5a66 }, 'glass');
 function seeded(seed) {
   let a = (seed >>> 0) || 1;
   return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
@@ -912,7 +947,7 @@ function setDrawTrack(on) {
 function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
 App.env = store.get('env', 'passthrough'); App.garageLook = store.get('garageLook', 'team'); App.ptWindow = store.get('ptWindow', false); App.ptSize = store.get('ptSize', 'M');
 let garageLoading = null;
-const GARAGE_VER = '10';
+const GARAGE_VER = '11';
 function loadGarage() {
   if (window.KBGarage) return Promise.resolve();
   return garageLoading || (garageLoading = new Promise((res, rej) => {
@@ -2190,7 +2225,7 @@ function wristClick(e) { // pointing at a wrist button and clicking (trigger or 
   return false;
 }
 // Your own hands, as gloves, in the pit garage (in your own room you can see your real ones).
-const gloveMat = new THREE.MeshLambertMaterial({ color: 0xdcd7cc }), gloveDark = new THREE.MeshLambertMaterial({ color: 0xd2342b });
+const gloveMat = KBMat({ color: 0xdcd7cc }, 'satin'), gloveDark = KBMat({ color: 0xd2342b }, 'plastic');
 const jointGeo = new THREE.SphereGeometry(1, 10, 8), boneGeo = new THREE.CylinderGeometry(1, 1, 1, 8), UPV = new THREE.Vector3(0, 1, 0);
 // WebXR's 25 hand joints: 0 wrist, then thumb (4), index, middle, ring and little finger (5 each)
 const BONES = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [8, 9], [0, 10], [10, 11], [11, 12], [12, 13], [13, 14], [0, 15], [15, 16], [16, 17], [17, 18], [18, 19], [0, 20], [20, 21], [21, 22], [22, 23], [23, 24], [1, 5], [5, 10], [10, 15], [15, 20], [6, 11], [11, 16], [16, 21]];
@@ -2510,6 +2545,8 @@ $('#satSel').value = store.get('sat', 'esri'); $('#mtKey').value = store.get('mt
 $('#mtKeyWrap').hidden = $('#satSel').value !== 'maptiler';
 $('#sceneryChk').checked = App.scenery;
 $('#sceneryChk').onchange = e => setScenery(e.target.checked);
+$('#glossChk').checked = App.gloss;
+$('#glossChk').onchange = e => setGloss(e.target.checked);
 $('#trackChk').checked = App.drawTrack;
 $('#trackChk').onchange = e => setDrawTrack(e.target.checked);
 $('#satSel').onchange = e => { if (e.target.value !== 'off' && store.get('sat', 'esri') === 'off') setScenery(false); store.set('sat', e.target.value); $('#mtKeyWrap').hidden = e.target.value !== 'maptiler'; reloadSatellite(); };
@@ -2559,7 +2596,7 @@ window.KB = {
 (function loadWeather() { // circuit weather: menu section, table sign, alerts
   const sc = document.createElement('script'); sc.src = 'forecast-panel.js?v=4'; sc.async = true; document.head.appendChild(sc);
 })();
-const DRIVE_VER = '6'; // bump whenever drive.js changes, so devices don't keep an old copy
+const DRIVE_VER = '7'; // bump whenever drive.js changes, so devices don't keep an old copy
 let driveLoading = null;
 function loadDrive() {
   if (window.KBDrive) return Promise.resolve();
@@ -2576,8 +2613,8 @@ document.querySelectorAll('#lookSeg button').forEach(b => b.onclick = () => setL
 $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
-const HANG_VER = '5';
-const POKER_VER = '4';
+const HANG_VER = '6';
+const POKER_VER = '5';
 let pokerLoading = null;
 window.KBLoadPoker = function loadPoker() { // poker and race bets, for people in a hangout
   if (window.KBPoker) return Promise.resolve();

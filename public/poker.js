@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 4;
+const POKER_BUILD = 5;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -273,7 +273,7 @@ function setCard(g, code, faceUp) { // lying on the felt: face up shows the card
 }
 const DENOMS = [[5000, 0xf28a1e], [1000, 0xe8c33a], [500, 0x8e5bd6], [100, 0x222428], [25, 0x2f8f4e]];
 const chipGeo = new THREE.CylinderGeometry(0.019, 0.019, 0.0034, 18), chipMats = new Map();
-const chipMat = d => { if (!chipMats.has(d)) { const m = new THREE.MeshToonMaterial({ color: DENOMS.find(x => x[0] === d)[1] }); chipMats.set(d, m); } return chipMats.get(d); };
+const chipMat = d => { if (!chipMats.has(d)) { const m = KBMat({ color: DENOMS.find(x => x[0] === d)[1] }, 'plastic'); chipMats.set(d, m); } return chipMats.get(d); };
 function chipsFor(amount) { const out = []; let left = Math.round(amount); for (const [d] of DENOMS) { let n = Math.floor(left / d); left -= n * d; if (n) out.push([d, n]); } if (left > 0) out.push([25, 1]); return out; }
 function buildStack(group, amount) { // chip towers, one per colour, capped so a big stack still looks tidy
   if (group.userData.amount === amount) return; group.userData.amount = amount;
@@ -311,7 +311,7 @@ function build3D(anchor) {
   const board = [0, 1, 2, 3, 4].map(k => { const c = makeCard(); c.position.set((k - 2) * 0.075, CARD_Y, -0.02); c.rotation.set(-Math.PI / 2, 0, 0); g.add(c); return c; });
   const pot = new THREE.Group(); pot.position.set(-0.03, 0, 0.1); g.add(pot);
   const potPlate = plate(320, 72); potPlate.position.set(0, 0.16, 0.1); potPlate.scale.set(0.3, 0.068, 1); g.add(potPlate);
-  const btn = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.008, 20), new THREE.MeshToonMaterial({ color: 0xffffff })); g.add(btn);
+  const btn = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.008, 20), KBMat({ color: 0xffffff }, 'plastic')); g.add(btn);
   // the action bar floats over the felt in front of you (headset)
   const bar = { cv: document.createElement('canvas') }; bar.cv.width = 1024; bar.cv.height = 400; bar.tex = new THREE.CanvasTexture(bar.cv);
   bar.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.242), new THREE.MeshBasicMaterial({ map: bar.tex, transparent: true, side: THREE.DoubleSide }));

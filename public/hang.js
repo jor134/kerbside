@@ -5,7 +5,7 @@
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const renderer = KB.renderer;
-const HANG_BUILD = 5;
+const HANG_BUILD = 6;
 const COLORS = ['#D2342B', '#F28A1E', '#E8C33A', '#2F8F4E', '#2BB5A0', '#2E6FD9', '#8E5BD6', '#E66BB0', '#C9CED3', '#F2F2EF'];
 
 const me = Object.assign({ name: '', color: COLORS[Math.floor(Math.random() * COLORS.length)], follow: true }, store.get('hang:me', {}));
@@ -300,8 +300,8 @@ const AG = (() => {
     ring: new THREE.TorusGeometry(0.19, 0.012, 8, 32)
   };
 })();
-const visorMat = new THREE.MeshToonMaterial({ color: 0x15191c });
-const whiteMat = new THREE.MeshToonMaterial({ color: 0xf2f2ee });
+const visorMat = KBMat({ color: 0x15191c }, 'glass');
+const whiteMat = KBMat({ color: 0xf2f2ee }, 'paint');
 function nameSprite(name, color, muted) {
   const cv = document.createElement('canvas'); cv.width = 512; cv.height = 128; const x = cv.getContext('2d');
   x.font = '700 64px "Barlow Condensed", sans-serif';
@@ -319,7 +319,7 @@ function getAvatar(id) {
   const key = (peer.name || '') + '|' + (peer.color || '') + '|' + !!peer.muted;
   if (a && a.key === key) return a;
   if (a) dropAvatar(id);
-  const suit = new THREE.MeshToonMaterial({ color: new THREE.Color(peer.color || '#9aa5ab') });
+  const suit = KBMat({ color: new THREE.Color(peer.color || '#9aa5ab') }, 'satin');
   const M = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); if (x !== undefined) m.position.set(x, y, z); return m; };
   const g = new THREE.Group();
   // head: helmet, visor, stripe over the top
