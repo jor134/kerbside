@@ -947,7 +947,7 @@ function setDrawTrack(on) {
 function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
 App.env = store.get('env', 'passthrough'); App.garageLook = store.get('garageLook', 'team'); App.ptWindow = store.get('ptWindow', false); App.ptSize = store.get('ptSize', 'M');
 let garageLoading = null;
-const GARAGE_VER = '11';
+const GARAGE_VER = '12';
 function loadGarage() {
   if (window.KBGarage) return Promise.resolve();
   return garageLoading || (garageLoading = new Promise((res, rej) => {
@@ -2208,6 +2208,7 @@ function resetView() {
   if (window.KBDrive && KBDrive.active) { if (KBDrive.recenter) KBDrive.recenter(); toast('View recentred.', 2500); return; }
   if (window.KBPoker && KBPoker.seat && KBPoker.seat() >= 0 && window.KBGarage && KBGarage.seated() >= 0) { KBPoker.placeHere(); return; } // at the poker table: your seat is where you are
   if (window.KBGarage && KBGarage.atPitwall && KBGarage.atPitwall()) { KBGarage.setAway(false); setTimeout(() => KBGarage.setAway(true), 120); toast('View reset.', 2500); return; } // step back onto the same spot
+  if (window.KBGarage && KBGarage.roaming && KBGarage.roaming()) { KBGarage.setAway(false); toast('Back at the table.', 2500); return; } // walked off: go back to the circuit table
   if (App.view !== 'trackside') { // the table (and the garage around it) moves in front of you, at the height it was
     const head = xrHead(), f = xrForward(), y = App.placed ? App.anchor.y : Math.max(0.3, head.y - 0.55);
     placeTabletop(head.clone().addScaledVector(f, 0.7).setY(y));

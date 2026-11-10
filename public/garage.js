@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 11;
+const GARAGE_BUILD = 12;
 
 /* ---------------- Materials ---------------- */
 const toon = (c, gloss) => KBMat({ color: c }, gloss);
@@ -515,6 +515,47 @@ const PITWALL = { pos: new THREE.Vector3(0, STAND.floor, STAND.feetZ), yaw: null
 const look = { yaw: 0, pitch: -0.14, fov: 68 };
 function setSpot(sp) { spot = sp; look.yaw = sp && sp.yaw != null ? sp.yaw : 0; look.pitch = sp ? sp.pitch : -0.14; look.fov = 68; }
 function setAway(on) { setSpot(on ? PITWALL : null); }
+// Walking around: pinch and hold (or hold the trigger) while pointing at the floor. A ring shows where
+// you'll land; let go to jump there. Works in your garage and along the pit lane, not at the poker table
+// while you're seated. A quick pinch still just clicks.
+const tp = { src: null, t0: 0, ok: false, pt: new THREE.Vector3() };
+const tpMark = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.27, 40), new THREE.MeshBasicMaterial({ color: 0x3ff4ff, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthTest: false }));
+tpMark.rotation.x = -Math.PI / 2; tpMark.visible = false; tpMark.renderOrder = 25;
+const tpDot = new THREE.Mesh(new THREE.CircleGeometry(0.06, 20), tpMark.material); tpDot.position.z = 0.001; tpMark.add(tpDot);
+const tpV = new THREE.Vector3();
+function canTeleport() {
+  return !!built && built.G.visible && App.env === 'garage' && renderer.xr.isPresenting && !App.placing && !App.placingWindow
+    && !(window.KBDrive && KBDrive.active) && !(spot && spot.seat != null);
+}
+function onMenu(c) { KB.rayFrom(c); return KB.raycaster.intersectObjects([KB.uiMesh, KB.chaseMesh].filter(m => m && m.visible), false).length > 0; }
+function allowedFloor(x, z) {
+  if (Math.hypot(x, z) < 1.0) return false; // not onto the circuit table
+  if (look_ === 'casino' && Math.hypot((x - POKER.x) / (POKER.rx + 0.45), (z - POKER.z) / (POKER.rz + 0.45)) < 1) return false; // nor the poker table
+  if (Math.abs(x) < W / 2 - 0.35 && z > Dfront && z < Dback - 0.35) return true; // inside your garage
+  return z <= Dfront && z > Z.wall + 0.6 && Math.abs(x) < 40; // the pit lane, 40 m either way
+}
+for (const c of KB.controllers) {
+  c.addEventListener('selectstart', () => { if (canTeleport() && !onMenu(c)) { tp.src = c; tp.t0 = performance.now(); tp.ok = false; } });
+  c.addEventListener('selectend', () => {
+    if (tp.src !== c) return;
+    const go = tp.ok && canTeleport() && !onMenu(c); tp.src = null; tp.ok = false; tpMark.visible = false;
+    if (go) setSpot({ pos: tp.pt.clone(), yaw: null, eye: 1.62, pitch: -0.14, free: true });
+  });
+}
+function teleportAim() {
+  if (!tp.src) return;
+  if (!canTeleport()) { tp.src = null; tp.ok = false; tpMark.visible = false; return; }
+  if (!tpMark.parent) built.G.add(tpMark);
+  tp.ok = false;
+  if (performance.now() - tp.t0 > 350) { // held long enough to mean it
+    KB.rayFrom(tp.src); const o = KB.raycaster.ray.origin, d = KB.raycaster.ray.direction, floorY = built.G.position.y;
+    if (d.y < -0.08) {
+      const t = (floorY - o.y) / d.y;
+      if (t > 0.3 && t < 14) { tpV.set(o.x + d.x * t, floorY, o.z + d.z * t); built.G.worldToLocal(tpV); if (allowedFloor(tpV.x, tpV.z)) { tp.ok = true; tp.pt.set(tpV.x, 0, tpV.z); } }
+    }
+  }
+  tpMark.visible = tp.ok; if (tp.ok) tpMark.position.set(tp.pt.x, 0.03, tp.pt.z);
+}
 function away() { return !!spot && App.env === 'garage'; }
 function atPitwall() { return spot === PITWALL && App.env === 'garage'; }
 // Poker seats: you stand at the rail (headset) or look on from your chair (flat screen).
@@ -613,6 +654,7 @@ function frame(dt) {
       updateTraffic(dt);
       renderCams(dt, atPitwall());
     }
+    teleportAim();
     syncTeleport(show);
   }
   // passthrough window
@@ -634,5 +676,6 @@ function sessionEnded() { win.placed = false; frozenYaw = null; lastAnchor.set(1
 window.KBGarage = { frame, startWindowPlacing, confirmWindow, canWindow, sessionEnded, setTeamColor, setAway, away, atPitwall, flatCam, lookBy, zoomBy, build: GARAGE_BUILD,
   setLook, look: () => look_, seatAt, seated: () => spot && spot.seat != null ? spot.seat : -1,
   pokerAnchor: () => built && built.casino.anchor, pokerGeo: POKER, seatSpot, stencil: outsideWindow,
-  _dbg: () => ({ TR, built, SCR, OFF, look, spot }) };
+  roaming: () => !!(spot && spot.free && App.env === 'garage'),
+  _dbg: () => ({ TR, built, SCR, OFF, look, spot, tp, tpMark }) };
 })();
