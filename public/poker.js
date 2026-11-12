@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 7;
+const POKER_BUILD = 8;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -47,12 +47,18 @@ function onMsg(m) {
     if (m.s.toAct >= 0 && m.s.toAct === P.mySeat && (!prev || prev.toAct !== m.s.toAct)) myTurn();
   } else if (m.a === 'hole') {
     P.hole = m.hole; P.hand = m.hand; P.bal = m.bal; P.rebuys = m.rebuys; P.gotMe = true;
-    if (m.seat !== P.mySeat) { P.mySeat = m.seat; placeMe(); }
-  } else if (m.a === 'me') { P.gotMe = true; P.bal = m.bal; P.rebuys = m.rebuys; if (m.seat !== P.mySeat) { P.mySeat = m.seat; placeMe(); } }
+    if (m.seat !== P.mySeat) { P.mySeat = m.seat; placeMe(); seatedNow(); }
+  } else if (m.a === 'me') { P.gotMe = true; P.bal = m.bal; P.rebuys = m.rebuys; if (m.seat !== P.mySeat) { P.mySeat = m.seat; placeMe(); seatedNow(); } }
   else if (m.a === 'err') toast(m.msg, 4000);
   else if (m.a === 'top') P.top = m.top;
   P.dirty = true;
 }
+// Practice: bots fill the empty seats once you've sat down.
+const botsAtTable = () => (P.state ? P.state.seats.filter(s => s && /^bot-/.test(s.pid)).length : 0);
+const addBots = n => send({ t: 'pk', a: 'bots', n });
+const removeBots = () => send({ t: 'pk', a: 'bots', n: 0 });
+function practice() { if (P.mySeat >= 0) addBots(3); else { P.wantBots = 3; const s = P.state; const free = s ? s.seats.findIndex(x => !x) : 0; sit(free < 0 ? 0 : free); } }
+function seatedNow() { if (P.mySeat >= 0 && P.wantBots) { const n = P.wantBots; P.wantBots = 0; addBots(n); toast('Bots joined the table: a hand starts in a few seconds.', 4000); } }
 function myTurn() {
   if (renderer.xr.isPresenting) buzz(0.5, 60); else if (!P.open) toast('♠ Your turn at the poker table.', 3000);
 }
@@ -160,6 +166,10 @@ function uiAct(a, b) {
     case 'stand': send({ t: 'pk', a: 'stand' }); break;
     case 'sitout': send({ t: 'pk', a: 'sitout', on: !(me() && me().sitOut) }); break;
     case 'topup': send({ t: 'pk', a: 'topup' }); break;
+    case 'practice': practice(); break;
+    case 'addbot': addBots(1); break;
+    case 'fillbots': addBots(5); break;
+    case 'nobots': removeBots(); break;
     case 'fold': act('fold'); break;
     case 'check': act(o && o.canCheck ? 'check' : 'call'); break;
     case 'raise': doRaise(P.raiseTo || (o && o.minTo)); break;
@@ -203,7 +213,7 @@ function tableHtml(s) {
   }
   h += `<div class="mid">${s.board.map(c => cardHtml(c)).join('') || '<span class="sub">' + (s.phase === 'idle' ? 'Waiting for two players' : '') + '</span>'}<div style="margin-top:4px">Pot <b>${fmt(potSize())}</b></div></div></div>`;
   if (s.result && s.phase === 'done') h += `<p><b>${s.result.winners.map(w => `${esc(w.name)} wins ${fmt(w.amount)}${w.hand ? ' with ' + esc(w.hand) : ''}`).join(' · ')}</b></p>`;
-  if (mine < 0) return h + `<p class="sub">Pick a seat to play. ${P.bal < 100 ? '<button class="b" data-pk="topup">Top up to 10,000</button>' : ''}</p>`;
+  if (mine < 0) return h + `<p class="sub">Pick a seat to play, or practise against bots. ${P.bal < 100 ? '<button class="b" data-pk="topup">Top up to 10,000</button>' : ''}</p><div class="row"><button class="b go" data-pk="practice">Practise with bots</button></div>`;
   const st = s.seats[mine];
   if (P.hole) h += `<div class="row">${P.hole.map(c => cardHtml(c, 'big')).join('')}<span style="margin-left:8px">${esc(handLabel([...P.hole, ...s.board]))}</span></div>`;
   const o = opts();
@@ -212,6 +222,7 @@ function tableHtml(s) {
     h += `<div class="row"><button class="b no" data-pk="fold">Fold</button><button class="b" data-pk="check">${o.canCheck ? 'Check' : 'Call ' + fmt(o.call)}</button>${o.canRaise ? `<button class="b go" data-pk="raise">${s.curBet ? 'Raise' : 'Bet'} <span id="pkRaiseLbl">${fmt(P.raiseTo)}</span></button>` : ''}</div>`;
     if (o.canRaise && o.maxTo > o.minTo) h += `<div class="row"><input type="range" id="pkRaise" min="${o.minTo}" max="${o.maxTo}" step="50" value="${P.raiseTo}"></div><div class="row"><button class="b" data-pk="half">½ pot</button><button class="b" data-pk="pot">Pot</button><button class="b" data-pk="allin">All in</button></div>`;
   } else if (s.toAct >= 0 && s.seats[s.toAct]) h += `<p class="sub">Waiting for ${esc(s.seats[s.toAct].name)}…</p>`;
+  h += `<div class="row"><button class="b" data-pk="addbot" ${s.seats.every(Boolean) ? 'disabled' : ''}>+ Bot</button><button class="b" data-pk="fillbots" ${s.seats.every(Boolean) ? 'disabled' : ''}>Fill with bots</button>${botsAtTable() ? '<button class="b" data-pk="nobots">Remove bots</button>' : ''}</div>`;
   h += `<div class="row"><button class="b" data-pk="sitout">${st && st.sitOut ? 'I’m back' : 'Sit out'}</button><button class="b" data-pk="stand">Leave table</button>${st && st.stack < 100 && !(st.inHand && s.phase !== 'done' && s.phase !== 'idle') ? '<button class="b go" data-pk="topup">Top up</button>' : ''}</div>`;
   return h;
 }
@@ -409,6 +420,7 @@ function updateBar() {
     }
     btn(24, 300, 220, 70, 'Close', () => { P.xrOpen = false; });
     if (P.bal < 100) btn(256, 300, 260, 70, 'Top up to 10,000', () => send({ t: 'pk', a: 'topup' }), 'go');
+    else btn(256, 300, 260, 70, 'Practise with bots', s ? practice : null, s ? 'go' : 'off');
     c.font = '500 22px Barlow, sans-serif'; c.fillStyle = '#94A1A8'; c.fillText('Chips have no cash value.', 540, 344);
   } else if (P.xrTab === 'act') {
     c.font = '600 32px "Barlow Condensed", sans-serif'; c.fillStyle = '#E9E6DF';
@@ -429,6 +441,8 @@ function updateBar() {
     btn(256, 300, 220, 70, 'Leave table', () => send({ t: 'pk', a: 'stand' }));
     btn(488, 300, 220, 70, 'Place here', placeHere);
     if (st && st.stack < 100) btn(720, 300, 220, 70, 'Top up', () => send({ t: 'pk', a: 'topup' }), 'go');
+    else if (botsAtTable()) btn(720, 300, 220, 70, 'Remove bots', removeBots);
+    else btn(720, 300, 220, 70, 'Add bots', () => addBots(3), s && s.seats.every(Boolean) ? 'off' : '');
   } else {
     const live = P.bets.filter(m => m.status === 'open'), host = KBHang.isHost();
     let y = 100;
@@ -596,5 +610,5 @@ const Race = {
 // For the glowing seats in the casino: who's in seat i, and sitting down from there.
 const ready = () => !!(P.state && P.gotMe);
 const seatName = i => { const st = P.state && P.state.seats[i]; return st ? st.name : null; };
-window.KBPoker = { onMsg, frame, onSelect, placeHere, openXR, ready, seatName, sitAt: i => sit(i), seat: () => P.mySeat, open: openUI, lookChanged, build: POKER_BUILD, race: Race, bal: () => P.bal, _P: P, _hand: handLabel, _T: () => T3, _held: () => ({ kind: held.kind, denom: held.denom, near: nearSomething, hands: [...hands.values()] }) };
+window.KBPoker = { onMsg, frame, onSelect, placeHere, openXR, ready, seatName, sitAt: i => sit(i), wantBots: n => { P.wantBots = n; }, seat: () => P.mySeat, open: openUI, lookChanged, build: POKER_BUILD, race: Race, bal: () => P.bal, _P: P, _hand: handLabel, _T: () => T3, _held: () => ({ kind: held.kind, denom: held.denom, near: nearSomething, hands: [...hands.values()] }) };
 })();

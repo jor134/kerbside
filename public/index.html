@@ -2234,6 +2234,7 @@ async function pokerSeatFromHeadset(i) {
     await window.KBLoadPoker(); KBPoker.openXR();
     for (let k = 0; k < 40 && !KBPoker.ready(); k++) await new Promise(r => setTimeout(r, 250));
     if (!KBPoker.ready()) { toast('Still connecting to the room. Try the seat again in a moment.', 5000); return; }
+    if (!(KBHang.others && KBHang.others() > 0)) KBPoker.wantBots(3); // on your own: bots join so you can play straight away
     KBPoker.sitAt(i);
   } catch (e) { toast('Poker: ' + (e.message || e) + '.', 7000); }
 }
@@ -2689,7 +2690,7 @@ $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
 const HANG_VER = '8';
-const POKER_VER = '7';
+const POKER_VER = '8';
 let pokerLoading = null;
 window.KBLoadPoker = function loadPoker() { // poker and race bets, for people in a hangout
   if (window.KBPoker) return Promise.resolve();

@@ -2,7 +2,7 @@
 // Also keeps a shared store of circuit outlines, so every device can draw the track during a live session.
 import { DurableObject } from 'cloudflare:workers';
 import { weatherRequest, weatherRun } from './forecast-worker.js';
-import { PokerTable, SideBets, START, BLINDS } from './poker.js';
+import { PokerTable, SideBets, START, BLINDS, BOT_NAMES, isBot, botAction } from './poker.js';
 
 const RS = '\x1e';
 const F1_BASE = 'https://livetiming.formula1.com/signalrcore';
@@ -643,12 +643,48 @@ export class HangRoom extends DurableObject {
   armTick() {
     const busy = this.table.active() || this.bets.list.some(m => m.status === 'open' || m.status === 'closed');
     if (busy && !this.tickT) this.tickT = setInterval(() => {
-      let changed = this.table.tick();
+      let changed = this.botsTick();
+      changed = this.table.tick() || changed;
       for (const [, payouts] of this.bets.tick()) { for (const x of payouts || []) this.credit(x.pid, x.amt); changed = true; }
       if (this.bets.list.some(m => m.status === 'open' && Date.now() >= m.closes)) changed = true;
       if (changed) this.pokerState(); else this.armTick();
     }, 1000);
     if (!busy && this.tickT) { clearInterval(this.tickT); this.tickT = null; }
+  }
+  // Practice bots: they think for a second or two, top themselves up when they bust, and leave once no
+  // real player is left at the table. Their chips aren't saved anywhere.
+  botsTick() {
+    const T = this.table, seats = T.seats; let changed = false;
+    const bots = seats.some(s => s && isBot(s.pid)), between = T.phase === 'done' || T.phase === 'idle';
+    if (bots && !seats.some(s => s && !isBot(s.pid))) { // nobody real left: clear the bots
+      for (let i = 0; i < seats.length; i++) if (seats[i] && isBot(seats[i].pid)) { if (between) seats[i] = null; else T.stand(i); }
+      if (between) { T.phase = 'idle'; T.nextAt = 0; }
+      return true;
+    }
+    if (bots) { // bots only deal hands while a real player can play (has chips, isn't sitting out)
+      const playable = seats.filter(s => s && !isBot(s.pid) && s.stack > 0 && !s.sitOut).length;
+      if (!playable && between && T.nextAt) { T.nextAt = 0; changed = true; }
+      if (playable && between && !T.nextAt && seats.filter(s => s && s.stack > 0 && !s.sitOut).length >= 2) T.nextAt = Date.now() + 2000;
+    }
+    if (T.phase === 'done' || T.phase === 'idle') for (const s of seats) if (s && isBot(s.pid) && s.stack < BLINDS.bb && !s.inHand) { s.stack = START; changed = true; }
+    const i = T.toAct, s = i >= 0 && seats[i];
+    if (T.betting() && s && isBot(s.pid)) {
+      if (!this.botWait || this.botFor !== `${T.hand}:${i}:${T.board.length}:${T.curBet}`) { this.botFor = `${T.hand}:${i}:${T.board.length}:${T.curBet}`; this.botWait = 1 + Math.floor(Math.random() * 2); return changed; }
+      if (--this.botWait > 0) return changed;
+      const d = botAction(T, i); this.botWait = 0;
+      if (d && T.act(i, d.a, d.amount)) T.act(i, T.toCall(i) ? 'fold' : 'check'); // fall back if the move was refused
+      return true;
+    }
+    return changed;
+  }
+  addBots(n) {
+    const T = this.table; let added = 0;
+    for (let i = 0; i < T.seats.length && added < n; i++) {
+      if (T.seats[i]) continue;
+      const used = new Set(T.seats.filter(Boolean).map(s => s.name)), name = BOT_NAMES.find(b => !used.has(b)) || 'Bot';
+      if (!T.sit(i, { pid: 'bot-' + i + '-' + Date.now().toString(36), peer: null, name, bal: START })) added++;
+    }
+    return added;
   }
   async onPoker(id, p, m) {
     const err = e => { if (e) this.send(p.ws, { t: 'pk', a: 'err', msg: e }); return !!e; };
@@ -676,6 +712,12 @@ export class HangRoom extends DurableObject {
         if (this.bal(p.pid) >= BLINDS.bb) return err('Top-ups are for when you’re out of chips.');
         w.rebuys++; if (mine >= 0) T.seats[mine].stack = START; else w.bal = START;
         this.markDirty(p.pid); this.sendMe(p.pid); return this.pokerState();
+      }
+      case 'bots': {
+        const T = this.table;
+        if (m.n > 0) { if (!T.seats.some(s => s && !isBot(s.pid))) return err('Sit down first, then add bots.'); if (!this.addBots(Math.min(5, +m.n || 1))) return err('The table is full.'); }
+        else for (let i = 0; i < T.seats.length; i++) if (T.seats[i] && isBot(T.seats[i].pid)) T.stand(i);
+        return this.pokerState();
       }
       case 'top': { let top = []; try { await this.flush(); top = (await this.chips({ top: 10 })).top || []; } catch (e) {} return this.send(p.ws, { t: 'pk', a: 'top', top }); }
     }

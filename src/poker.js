@@ -68,6 +68,7 @@ export class PokerTable {
     this.hand = 0; this.toAct = -1; this.curBet = 0; this.minRaise = BLINDS.bb; this.deadline = 0;
     this.nextAt = 0; this.runAt = 0; this.result = null; this.last = null;
     this.saves = []; // seats whose stacks changed and should be saved: drained by the server
+    this.blindsBB = BLINDS.bb;
   }
   seatOf(pid) { return this.seats.findIndex(s => s && s.pid === pid); }
   betting() { return this.phase === 'preflop' || this.phase === 'flop' || this.phase === 'turn' || this.phase === 'river'; }
@@ -246,6 +247,36 @@ export class PokerTable {
       options: this.toAct >= 0 ? this.options(this.toAct) : null
     };
   }
+}
+
+/* ---------------- Practice bots ---------------- */
+// Computer players for practice. They play a simple, readable game: strong hands bet, medium hands call
+// when the price is right, weak hands fold, with a little bluffing so they aren't trivial to read.
+export const BOT_NAMES = ['Bot Ava', 'Bot Max', 'Bot Lin', 'Bot Raj', 'Bot Zoe', 'Bot Teo'];
+export const isBot = pid => typeof pid === 'string' && pid.startsWith('bot-');
+function preflopStrength(h) { // 0..1 from the two hole cards
+  const v = h.map(c => RANKS.indexOf(c[0]) + 2).sort((a, b) => b - a), suited = h[0][1] === h[1][1], gap = v[0] - v[1];
+  if (gap === 0) return Math.min(1, 0.55 + v[0] / 30);                 // pairs: 22 about 0.62, AA 1
+  let s = (v[0] + v[1]) / 34;                                         // AK about 0.79, 72 about 0.26
+  if (suited) s += 0.06; if (gap === 1) s += 0.04; else if (gap > 4) s -= 0.06;
+  return Math.max(0, Math.min(0.95, s));
+}
+const MADE = [0.18, 0.5, 0.7, 0.78, 0.84, 0.88, 0.94, 0.98, 1];      // high card .. straight flush
+export function botAction(T, i, rng = Math.random) {
+  const s = T.seats[i], o = T.options(i); if (!s || !o) return null;
+  const pot = T.seats.reduce((a, x) => a + (x ? x.total : 0), 0);
+  let str = T.board.length ? MADE[evalHand([...s.hole, ...T.board])[0]] : preflopStrength(s.hole);
+  if (T.board.length) { // a pair made only by the board isn't worth much
+    const boardOnly = evalHand(T.board.length >= 5 ? T.board : [...T.board]), mine = evalHand([...s.hole, ...T.board]);
+    if (T.board.length >= 2 && boardOnly[0] === mine[0] && mine[0] <= 2) str -= 0.25;
+  }
+  str += (rng() - 0.5) * 0.12; // a little unpredictability
+  const call = o.call, odds = call / Math.max(1, pot + call), r = rng();
+  const raiseTo = f => Math.min(o.maxTo, Math.max(o.minTo, Math.round((T.curBet + pot * f) / 50) * 50));
+  if (o.canRaise && (str > 0.8 || (str > 0.62 && r < 0.25) || r < 0.04)) return { a: 'raise', amount: raiseTo(str > 0.9 ? 0.9 : 0.6) };
+  if (call === 0) return o.canRaise && str > 0.55 && r < 0.4 ? { a: 'raise', amount: raiseTo(0.5) } : { a: 'check' };
+  if (str >= odds + 0.15 || (call <= T.blindsBB && str > 0.3) || r < 0.06) return { a: 'call' };
+  return { a: 'fold' };
 }
 
 /* ---------------- Race side bets ---------------- */
