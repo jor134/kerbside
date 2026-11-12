@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 6;
+const POKER_BUILD = 7;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -46,9 +46,9 @@ function onMsg(m) {
     if (!prev || prev.hand !== m.s.hand || prev.toAct !== m.s.toAct) { P.pending = 0; P.pendingChips = []; P.raiseTo = 0; }
     if (m.s.toAct >= 0 && m.s.toAct === P.mySeat && (!prev || prev.toAct !== m.s.toAct)) myTurn();
   } else if (m.a === 'hole') {
-    P.hole = m.hole; P.hand = m.hand; P.bal = m.bal; P.rebuys = m.rebuys;
+    P.hole = m.hole; P.hand = m.hand; P.bal = m.bal; P.rebuys = m.rebuys; P.gotMe = true;
     if (m.seat !== P.mySeat) { P.mySeat = m.seat; placeMe(); }
-  } else if (m.a === 'me') { P.bal = m.bal; P.rebuys = m.rebuys; if (m.seat !== P.mySeat) { P.mySeat = m.seat; placeMe(); } }
+  } else if (m.a === 'me') { P.gotMe = true; P.bal = m.bal; P.rebuys = m.rebuys; if (m.seat !== P.mySeat) { P.mySeat = m.seat; placeMe(); } }
   else if (m.a === 'err') toast(m.msg, 4000);
   else if (m.a === 'top') P.top = m.top;
   P.dirty = true;
@@ -593,5 +593,8 @@ const Race = {
   bet(opt, amt) { const m = raceMarket(); if (m && m.status === 'open') placeBet(m.id, String(opt), amt); },
   staked(opt) { const m = raceMarket(); return m ? m.bets.filter(b => b.pid === KBHang.pid() && (opt == null || b.opt === String(opt))).reduce((a, b) => a + b.amt, 0) : 0; }
 };
-window.KBPoker = { onMsg, frame, onSelect, placeHere, openXR, seat: () => P.mySeat, open: openUI, lookChanged, build: POKER_BUILD, race: Race, bal: () => P.bal, _P: P, _hand: handLabel, _T: () => T3, _held: () => ({ kind: held.kind, denom: held.denom, near: nearSomething, hands: [...hands.values()] }) };
+// For the glowing seats in the casino: who's in seat i, and sitting down from there.
+const ready = () => !!(P.state && P.gotMe);
+const seatName = i => { const st = P.state && P.state.seats[i]; return st ? st.name : null; };
+window.KBPoker = { onMsg, frame, onSelect, placeHere, openXR, ready, seatName, sitAt: i => sit(i), seat: () => P.mySeat, open: openUI, lookChanged, build: POKER_BUILD, race: Race, bal: () => P.bal, _P: P, _hand: handLabel, _T: () => T3, _held: () => ({ kind: held.kind, denom: held.denom, near: nearSomething, hands: [...hands.values()] }) };
 })();

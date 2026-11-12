@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 12;
+const GARAGE_BUILD = 13;
 
 /* ---------------- Materials ---------------- */
 const toon = (c, gloss) => KBMat({ color: c }, gloss);
@@ -279,13 +279,51 @@ function buildCasino() {
     for (const [dx, dz] of [[-0.2, -0.2], [0.2, -0.2], [-0.2, 0.2], [0.2, 0.2]]) box(ch, 0.04, 0.42, 0.04, dx, 0.21, dz, gold);
   }
   const anchor = new THREE.Group(); anchor.position.set(POKER.x, POKER.top + 0.0065, POKER.z); // 1.5 mm above the felt's surface, so nothing lying on it fights with it g.add(anchor); // poker.js puts cards and chips here
-  return { group: g, anchor };
+  // glowing seats: point at one and click (or pinch) to sit there. Shown in the headset while you're standing.
+  const markers = [];
+  for (let i = 0; i < 6; i++) {
+    const s = seatSpot(i, 1.75, 1.25), m = new THREE.Group(); m.position.set(s.x, 0, s.z); g.add(m);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.55, depthWrite: false });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.36, 40), ringMat); ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; m.add(ring);
+    const glow = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.9, 24, 1, true), new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide })); glow.position.y = 0.45; m.add(glow);
+    const hit = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 1.3, 12), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, colorWrite: false })); hit.position.y = 0.65; m.add(hit);
+    const cv = document.createElement('canvas'); cv.width = 320; cv.height = 96; const tex = new THREE.CanvasTexture(cv);
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false })); label.scale.set(0.5, 0.15, 1); label.position.y = 1.35; m.add(label);
+    markers.push({ g: m, ring, glow, hit, label, cv, tex, sig: '' });
+  }
+  return { group: g, anchor, markers };
 }
 // Seat i around the poker table (0 nearest the circuit table, then clockwise seen from above), at
 // distance (rx, rz) from the centre, facing the middle of the table.
 function seatSpot(i, rx, rz) {
   const a = Math.PI - i * Math.PI / 3, x = POKER.x + rx * Math.sin(a), z = POKER.z + rz * Math.cos(a); // clockwise: seat 1 is on seat 0's left
   return { x, z, yaw: Math.atan2(POKER.x - x, POKER.z - z) };
+}
+let hoverSeat = -1, seatT = 0;
+function seatsShown() { return !!built && look_ === 'casino' && App.env === 'garage' && renderer.xr.isPresenting && !(spot && spot.seat != null) && !(window.KBDrive && KBDrive.active); }
+function seatHit(c) {
+  if (!seatsShown()) return -1;
+  KB.rayFrom(c); const hits = KB.raycaster.intersectObjects(built.casino.markers.map(m => m.hit), false);
+  return hits.length ? built.casino.markers.findIndex(m => m.hit === hits[0].object) : -1;
+}
+function pickSeat(c) { const i = seatHit(c); if (i < 0) return -1; const P = window.KBPoker; if (P && P.seatName && P.seatName(i)) { KB.toast('That seat is taken.'); return -2; } return i; }
+function updateSeats(dt) {
+  if (!built) return;
+  const on = seatsShown(); built.casino.markers.forEach(m => { m.g.visible = on; }); if (!on) { hoverSeat = -1; return; }
+  let hv = -1; for (const c of KB.controllers) { const i = seatHit(c); if (i >= 0) hv = i; }
+  hoverSeat = hv; const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 300);
+  const P = window.KBPoker, tick = (seatT += dt) > 0.4; if (tick) seatT = 0;
+  built.casino.markers.forEach((m, i) => {
+    const taken = P && P.seatName ? P.seatName(i) : null, hot = i === hv && !taken;
+    m.ring.material.opacity = taken ? 0.15 : hot ? 1 : 0.4 + 0.3 * pulse; m.glow.material.opacity = taken ? 0 : hot ? 0.28 : 0.06 + 0.06 * pulse;
+    m.ring.scale.setScalar(hot ? 1.12 : 1);
+    if (!tick && m.sig) return;
+    const sig = `${taken}|${hot}`; if (sig === m.sig) return; m.sig = sig;
+    const c = m.cv.getContext('2d'); c.clearRect(0, 0, 320, 96);
+    KB.rr(c, 4, 4, 312, 88, 16); c.fillStyle = hot ? 'rgba(201,161,59,.95)' : 'rgba(24,14,18,.85)'; c.fill(); c.strokeStyle = '#c9a13b'; c.lineWidth = 4; c.stroke();
+    c.fillStyle = hot ? '#1c0f12' : '#E9E6DF'; c.font = '700 36px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(taken ? taken : hot ? 'Click to sit' : `♠ Seat ${i + 1}`, 160, 48); m.tex.needsUpdate = true;
+  });
 }
 function setLook(l) {
   look_ = l === 'casino' ? 'casino' : 'team';
@@ -655,6 +693,7 @@ function frame(dt) {
       renderCams(dt, atPitwall());
     }
     teleportAim();
+    updateSeats(dt);
     syncTeleport(show);
   }
   // passthrough window
@@ -676,6 +715,6 @@ function sessionEnded() { win.placed = false; frozenYaw = null; lastAnchor.set(1
 window.KBGarage = { frame, startWindowPlacing, confirmWindow, canWindow, sessionEnded, setTeamColor, setAway, away, atPitwall, flatCam, lookBy, zoomBy, build: GARAGE_BUILD,
   setLook, look: () => look_, seatAt, seated: () => spot && spot.seat != null ? spot.seat : -1,
   pokerAnchor: () => built && built.casino.anchor, pokerGeo: POKER, seatSpot, stencil: outsideWindow,
-  roaming: () => !!(spot && spot.free && App.env === 'garage'),
+  roaming: () => !!(spot && spot.free && App.env === 'garage'), pickSeat,
   _dbg: () => ({ TR, built, SCR, OFF, look, spot, tp, tpMark }) };
 })();

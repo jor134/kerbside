@@ -953,7 +953,7 @@ function setDrawTrack(on) {
 function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
 App.env = store.get('env', 'passthrough'); App.garageLook = store.get('garageLook', 'team'); App.ptWindow = store.get('ptWindow', false); App.ptSize = store.get('ptSize', 'M');
 let garageLoading = null;
-const GARAGE_VER = '12';
+const GARAGE_VER = '13';
 function loadGarage() {
   if (window.KBGarage) return Promise.resolve();
   return garageLoading || (garageLoading = new Promise((res, rej) => {
@@ -1949,7 +1949,7 @@ function resize() {
 addEventListener('resize', resize); resize();
 
 /* ================= Headset panels ================= */
-const UIW = 1024, UIH = 1200;
+const UIW = 1024, UIH = 1290;
 const uiCanvas = document.createElement('canvas'); uiCanvas.width = UIW; uiCanvas.height = UIH;
 const uctx = uiCanvas.getContext('2d');
 const uiTex = new THREE.CanvasTexture(uiCanvas);
@@ -2002,7 +2002,7 @@ function drawXRPanel() {
     c.fillStyle = App.flag.color === '#E9E6DF' || App.flag.color === '#F2B233' ? '#20262B' : '#E9E6DF'; c.fillText(App.flag.text, UIW - 18 - w, 63);
     if (App.lapText) { c.fillStyle = '#E9E6DF'; c.textAlign = 'right'; c.fillText(App.lapText, UIW - 44 - w, 63); c.textAlign = 'left'; }
   }
-  App.board.slice(0, 22).forEach((r, i) => {
+  if (App.xrPage !== 'races') App.board.slice(0, 22).forEach((r, i) => {
     const col = i < 11 ? 0 : 1, x = 32 + col * 490, y = 92 + (i % 11) * 38;
     const hovered = App.hoverPx && App.hoverPx.x >= x - 6 && App.hoverPx.x <= x + 470 && App.hoverPx.y >= y && App.hoverPx.y <= y + 36;
     if (r.num === App.chaseNum || hovered) { rr(c, x - 6, y, 476, 36, 6); c.fillStyle = r.num === App.chaseNum ? '#3A454C' : '#2C353B'; c.fill(); }
@@ -2017,7 +2017,7 @@ function drawXRPanel() {
     c.globalAlpha = 1;
     hits.push({ x: x - 6, y, w: 476, h: 36, fn: () => setChase(r.num) });
   });
-  if (!App.board.length) { c.font = '500 26px Barlow'; c.fillStyle = '#94A1A8'; c.fillText(App.track ? 'Waiting for timing data…' : 'Load a session in the browser panel first.', 32, 140); }
+  if (!App.board.length && App.xrPage !== 'races') { c.font = '500 26px Barlow'; c.fillStyle = '#94A1A8'; c.fillText(App.track ? 'Waiting for timing data…' : 'Choose Load a race at the bottom to pick a session.', 32, 140); }
   const btn = (x, y, w, label, on, fn) => {
     const hv = App.hoverPx && App.hoverPx.x >= x && App.hoverPx.x <= x + w && App.hoverPx.y >= y && App.hoverPx.y <= y + 62;
     rr(c, x, y, w, 62, 12); c.fillStyle = on ? '#D2342B' : (hv ? '#46525A' : '#2F383E'); c.fill();
@@ -2098,6 +2098,28 @@ function drawXRPanel() {
   btn(380, y7, 130, 'Smaller', false, () => sizeBy(1 / 1.15)); btn(520, y7, 130, 'Bigger', false, () => sizeBy(1.15));
   c.font = '500 18px Barlow, sans-serif';
   btn(668, y7, 324, '♠ Poker', false, pokerFromHeadset);
+  const y8 = 1184;
+  btn(32, y8, 300, App.xrPage === 'races' ? 'Back to timing' : 'Load a race', App.xrPage === 'races', () => { App.xrPage = App.xrPage === 'races' ? 'main' : 'races'; if (App.xrPage === 'races' && !sessions.length) loadSessionList(App.xrYear || new Date().getFullYear()).then(() => { App.uiDirty = true; }); });
+  btn(342, y8, 250, App.source === 'live' ? 'Live: on' : 'Go live', App.source === 'live', () => { App.xrPage = 'main'; showSource('live'); Live.connect(); });
+  if (App.xrPage === 'races') { // the session picker, in place of the timing board
+    App.xrYear = App.xrYear || new Date().getFullYear();
+    let yx = 32; for (let yr = new Date().getFullYear(); yr >= 2023; yr--) { const v = yr; btn(yx, 84, 120, String(yr), App.xrYear === yr, () => { App.xrYear = v; App.xrPageN = 0; sessions = []; $('#year').value = v; loadSessionList(v).then(() => { App.uiDirty = true; }); }); yx += 130; }
+    const per = 14, pages = Math.max(1, Math.ceil(sessions.length / per)), pg = Math.min(App.xrPageN || 0, pages - 1);
+    c.font = '500 22px Barlow, sans-serif'; c.fillStyle = '#94A1A8';
+    if (!sessions.length) c.fillText('Loading sessions… (finished sessions only)', 32, 190);
+    sessions.slice(pg * per, pg * per + per).forEach((s, k) => {
+      const x = 32 + (k % 2) * 490, y = 160 + Math.floor(k / 2) * 44, hv = App.hoverPx && App.hoverPx.x >= x && App.hoverPx.x <= x + 476 && App.hoverPx.y >= y && App.hoverPx.y <= y + 40;
+      rr(c, x, y, 476, 40, 8); c.fillStyle = hv ? '#46525A' : '#2C353B'; c.fill();
+      c.fillStyle = '#E9E6DF'; c.font = '600 24px "Barlow Condensed", sans-serif';
+      const name = `${s.circuit_short_name || s.location} · ${s.session_name}`, d = new Date(s.date_start).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+      c.fillText(name.length > 30 ? name.slice(0, 29) + '…' : name, x + 12, y + 28); c.fillStyle = '#94A1A8'; c.textAlign = 'right'; c.fillText(d, x + 464, y + 28); c.textAlign = 'left';
+      hits.push({ x, y, w: 476, h: 40, fn: () => { App.xrPage = 'main'; Replay.load(s); toast('Loading ' + name + '…', 4000); } });
+    });
+    if (pages > 1) {
+      btn(712, 84, 130, '‹ Prev', false, () => { App.xrPageN = Math.max(0, pg - 1); });
+      btn(852, 84, 140, `Next › ${pg + 1}/${pages}`, false, () => { App.xrPageN = Math.min(pages - 1, pg + 1); });
+    }
+  }
   if (SAT.attrib) { c.font = '400 18px Barlow, sans-serif'; c.fillStyle = '#94A1A8'; c.fillText(SAT.attrib, 32, UIH - 12); }
   App.uiHits = hits; uiTex.needsUpdate = true;
 }
@@ -2114,6 +2136,9 @@ const raycaster = new THREE.Raycaster(), tmpM = new THREE.Matrix4();
 function rayFrom(c) { tmpM.identity().extractRotation(c.matrixWorld); raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld); raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tmpM); }
 function onSelect(e) {
   if (wristClick(e)) return;
+  if (!(window.KBPoker && KBPoker.ready && KBPoker._T && KBPoker._T() && KBPoker._T().bar.mesh.visible) && window.KBGarage && KBGarage.pickSeat) { // a glowing seat in the casino
+    const i = KBGarage.pickSeat(e.target); if (i >= 0) { pokerSeatFromHeadset(i); return; } if (i === -2) return;
+  }
   if (window.KBHang && KBHang.onSelect(e)) return;
   if (window.KBPoker && KBPoker.onSelect(e)) return;
   if (window.KBDrive && KBDrive.active) { KBDrive.onSelect(e); return; }
@@ -2197,6 +2222,17 @@ function setMenuHidden(hide) {
 function driveFromHeadset() { loadDrive().then(() => KBDrive.open()).catch(e => toast('Drive mode: ' + e.message + '.', 7000)); }
 // Poker from the headset: makes sure you're in a hangout (it starts one if not), opens the casino if it's
 // yours to choose, and puts the poker panel at the table so you can pick a seat.
+// Pointing at a glowing seat in the casino: starts a room with friends if you aren't in one, then sits you there.
+async function pokerSeatFromHeadset(i) {
+  try {
+    await loadHang();
+    if (!KBHang.active()) { await KBHang.invite(); if (!KBHang.active()) return; }
+    await window.KBLoadPoker(); KBPoker.openXR();
+    for (let k = 0; k < 40 && !KBPoker.ready(); k++) await new Promise(r => setTimeout(r, 250));
+    if (!KBPoker.ready()) { toast('Still connecting to the room. Try the seat again in a moment.', 5000); return; }
+    KBPoker.sitAt(i);
+  } catch (e) { toast('Poker: ' + (e.message || e) + '.', 7000); }
+}
 async function pokerFromHeadset() {
   try {
     await loadHang();
@@ -2647,8 +2683,8 @@ document.querySelectorAll('#lookSeg button').forEach(b => b.onclick = () => setL
 $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
-const HANG_VER = '6';
-const POKER_VER = '6';
+const HANG_VER = '7';
+const POKER_VER = '7';
 let pokerLoading = null;
 window.KBLoadPoker = function loadPoker() { // poker and race bets, for people in a hangout
   if (window.KBPoker) return Promise.resolve();

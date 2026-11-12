@@ -5,7 +5,7 @@
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const renderer = KB.renderer;
-const HANG_BUILD = 6;
+const HANG_BUILD = 7;
 const COLORS = ['#D2342B', '#F28A1E', '#E8C33A', '#2F8F4E', '#2BB5A0', '#2E6FD9', '#8E5BD6', '#E66BB0', '#C9CED3', '#F2F2EF'];
 
 const me = Object.assign({ name: '', color: COLORS[Math.floor(Math.random() * COLORS.length)], follow: true }, store.get('hang:me', {}));
@@ -44,9 +44,13 @@ async function join(code) {
   leave(true);
   H.code = code; H.joined = true; UI.render('Connecting…');
   store.set('hang:last', code);
-  // Ask for the microphone now: this runs from a tap, which iPad and Quest need, and the
-  // permission prompt can't appear once you're inside the headset view.
-  await startMic();
+  // Ask for the microphone now: this runs from a tap, which iPad and Quest need. Inside the headset view
+  // the permission prompt can't appear, and waiting for it used to leave you "in" a room that never
+  // connected (no poker table, no friends). There we wait a moment, then connect without voice.
+  if (KB.renderer.xr.isPresenting) {
+    const got = await Promise.race([startMic().then(() => !!H.mic), new Promise(r => setTimeout(() => r(false), 2500))]);
+    if (!got) { H.micErr = H.micErr || 'Voice is off: the microphone can only be allowed from the page.'; toast('Connected without voice: the microphone can only be allowed from the page. Join once from the page (outside the headset) to talk.', 9000); }
+  } else await startMic();
   await getIce();
   unlockAudio();
   const ws = H.ws = new WebSocket(url);
