@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 5;
+const POKER_BUILD = 6;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -237,6 +237,8 @@ function betsHtml() {
   }
   return h;
 }
+// From the headset menu: show the poker panel at the table (the table itself is in the casino garage).
+function openXR() { P.xrOpen = true; P.xrTab = 'act'; send({ t: 'pk', a: 'state' }); if (T3) T3.bar.sig = ''; }
 function openUI() { buildUI(); P.open = true; el.hidden = false; send({ t: 'pk', a: 'state' }); P.dirty = true; render(); }
 
 /* ---------------- The table in the casino garage ---------------- */
@@ -371,13 +373,19 @@ function update3D() {
 /* ---------------- Headset: action bar ---------------- */
 function updateBar() {
   const bar = T3.bar, xr = renderer.xr.isPresenting, mine = P.mySeat >= 0;
-  bar.mesh.visible = xr && mine;
+  bar.mesh.visible = xr && (mine || P.xrOpen);
   if (!bar.mesh.visible) return;
-  const S = T3.seats[P.mySeat];
-  bar.mesh.position.copy(S.dir).multiplyScalar(0.62 * KBGarage.pokerGeo.rx); bar.mesh.position.y = 0.2;
-  bar.mesh.rotation.set(-0.5, S.yaw + Math.PI, 0, 'YXZ');
+  if (mine) {
+    const S = T3.seats[P.mySeat];
+    bar.mesh.position.copy(S.dir).multiplyScalar(0.62 * KBGarage.pokerGeo.rx); bar.mesh.position.y = 0.2;
+    bar.mesh.rotation.set(-0.5, S.yaw + Math.PI, 0, 'YXZ');
+  } else { // not seated yet: stand the panel up at the edge of the table nearest you, facing you
+    const L = T3.anchor.worldToLocal(vT.copy(KB.xrHead())); let dx = L.x, dz = L.z; const n = Math.hypot(dx, dz) || 1; dx /= n; dz /= n;
+    bar.mesh.position.set(dx * (KBGarage.pokerGeo.rx + 0.05), 0.42, dz * (KBGarage.pokerGeo.rz + 0.05));
+    bar.mesh.rotation.set(-0.25, Math.atan2(-dx, -dz) + Math.PI, 0, 'YXZ');
+  }
   const o = opts(), s = P.state, st = me(), now = Date.now();
-  const sig = JSON.stringify([P.xrTab, o, P.pending, P.raiseTo, st && st.sitOut, s && s.toAct, s && Math.round((s.deadline - now) / 1000), P.bets.map(m => [m.id, m.status, m.pool, Math.round((m.closes - now) / 1000)]), P.betPick, P.betAmt, P.hover, P.bal]);
+  const sig = JSON.stringify([P.mySeat, s && s.seats.map(x => x && [x.name, x.stack]), P.xrTab, o, P.pending, P.raiseTo, st && st.sitOut, s && s.toAct, s && Math.round((s.deadline - now) / 1000), P.bets.map(m => [m.id, m.status, m.pool, Math.round((m.closes - now) / 1000)]), P.betPick, P.betAmt, P.hover, P.bal]);
   if (sig === bar.sig) return; bar.sig = sig;
   const c = bar.cv.getContext('2d'), W = 1024, H = 400, hits = bar.hits = [];
   c.clearRect(0, 0, W, H); KB.rr(c, 4, 4, W - 8, H - 8, 22); c.fillStyle = 'rgba(24,14,18,.92)'; c.fill(); c.strokeStyle = '#6b2b3a'; c.lineWidth = 4; c.stroke();
@@ -391,7 +399,18 @@ function updateBar() {
   c.textAlign = 'left'; c.textBaseline = 'alphabetic';
   btn(24, 20, 150, 56, 'Table', () => P.xrTab = 'act', P.xrTab === 'act' ? 'go' : ''); btn(186, 20, 150, 56, 'Race bets', () => P.xrTab = 'bets', P.xrTab === 'bets' ? 'go' : '');
   c.textAlign = 'right'; c.font = '500 28px Barlow, sans-serif'; c.fillStyle = '#94A1A8'; c.fillText('Chips ' + fmt(P.bal), W - 28, 58); c.textAlign = 'left';
-  if (P.xrTab === 'act') {
+  if (P.xrTab === 'act' && !mine) { // the lobby: pick a seat
+    c.font = '600 30px "Barlow Condensed", sans-serif'; c.fillStyle = '#E9E6DF';
+    c.fillText(!s ? 'Connecting to the table…' : 'Pick a seat. A hand starts once two players are seated. Blinds 50/100.', 28, 124);
+    for (let i = 0; i < SEATS; i++) {
+      const st = s && s.seats[i], x = 24 + (i % 3) * 330, y = 146 + Math.floor(i / 3) * 72;
+      if (st) btn(x, y, 316, 62, `${st.name.slice(0, 10)} · ${fmt(st.stack)}`, null, 'off');
+      else btn(x, y, 316, 62, `Seat ${i + 1} · Sit here`, s ? () => sit(i) : null, s ? 'go' : 'off');
+    }
+    btn(24, 300, 220, 70, 'Close', () => { P.xrOpen = false; });
+    if (P.bal < 100) btn(256, 300, 260, 70, 'Top up to 10,000', () => send({ t: 'pk', a: 'topup' }), 'go');
+    c.font = '500 22px Barlow, sans-serif'; c.fillStyle = '#94A1A8'; c.fillText('Chips have no cash value.', 540, 344);
+  } else if (P.xrTab === 'act') {
     c.font = '600 32px "Barlow Condensed", sans-serif'; c.fillStyle = '#E9E6DF';
     const info = o ? `Your turn · ${Math.max(0, Math.round((s.deadline - now) / 1000))}s${P.pending ? ' · chips in the circle: ' + fmt(P.pending) : ''}` : s && s.toAct >= 0 && s.seats[s.toAct] ? `Waiting for ${s.seats[s.toAct].name}` : s && s.phase === 'idle' ? 'Waiting for another player' : '';
     c.fillText(info, 28, 124);
@@ -574,5 +593,5 @@ const Race = {
   bet(opt, amt) { const m = raceMarket(); if (m && m.status === 'open') placeBet(m.id, String(opt), amt); },
   staked(opt) { const m = raceMarket(); return m ? m.bets.filter(b => b.pid === KBHang.pid() && (opt == null || b.opt === String(opt))).reduce((a, b) => a + b.amt, 0) : 0; }
 };
-window.KBPoker = { onMsg, frame, onSelect, placeHere, seat: () => P.mySeat, open: openUI, lookChanged, build: POKER_BUILD, race: Race, bal: () => P.bal, _P: P, _hand: handLabel, _T: () => T3, _held: () => ({ kind: held.kind, denom: held.denom, near: nearSomething, hands: [...hands.values()] }) };
+window.KBPoker = { onMsg, frame, onSelect, placeHere, openXR, seat: () => P.mySeat, open: openUI, lookChanged, build: POKER_BUILD, race: Race, bal: () => P.bal, _P: P, _hand: handLabel, _T: () => T3, _held: () => ({ kind: held.kind, denom: held.denom, near: nearSomething, hands: [...hands.values()] }) };
 })();

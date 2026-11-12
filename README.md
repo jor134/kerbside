@@ -118,6 +118,7 @@ Under Surroundings → Pit garage, choose **Casino** to dress the garage for a n
 - Everyone starts with 10,000 chips. Your stack is saved on your relay and follows you from race to race. If you run out, **Top up** brings you back to 10,000 (the leaderboard counts top-ups). Blinds are 50/100.
 - You have 40 seconds to act; after that you check if you can, otherwise you fold and sit out until you press **I'm back**. If you drop out of the hangout you keep your seat for 45 seconds.
 - **iPad, phone and computer:** the poker panel shows the table, your cards and the buttons. In the casino garage you also sit at the 3D table: drag to look around.
+- **Starting from the headset:** **♠ Poker** on the headset menu starts a hangout if you aren't in one, opens the casino (if you're the host) and puts a panel at the poker table where you pick a seat. Cards are only dealt once two players are seated, so alone you'll see your chips but no cards.
 - **Headset:** when you sit down you're moved to your chair at the table.
   - Pick up your cards (pinch, or grip button) to look at them; throw them into the middle to fold.
   - Take chips from the three trays in front of you (100, 500 and 1,000) and drop them in the gold circle; knock on the felt (a quick tap, down and up) to bet or call what's in the circle. Knock with nothing in the circle to check.

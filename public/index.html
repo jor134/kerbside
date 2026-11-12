@@ -2097,7 +2097,7 @@ function drawXRPanel() {
   btn(100, y7, 130, '⟲ Turn', false, () => turnBy(Math.PI / 12)); btn(240, y7, 130, 'Turn ⟳', false, () => turnBy(-Math.PI / 12));
   btn(380, y7, 130, 'Smaller', false, () => sizeBy(1 / 1.15)); btn(520, y7, 130, 'Bigger', false, () => sizeBy(1.15));
   c.font = '500 18px Barlow, sans-serif';
-  c.fillText('Left wrist: show or hide this menu.', 668, y7 + 26); c.fillText('Right wrist: reset the view to where you are.', 668, y7 + 50);
+  btn(668, y7, 324, '♠ Poker', false, pokerFromHeadset);
   if (SAT.attrib) { c.font = '400 18px Barlow, sans-serif'; c.fillStyle = '#94A1A8'; c.fillText(SAT.attrib, 32, UIH - 12); }
   App.uiHits = hits; uiTex.needsUpdate = true;
 }
@@ -2195,6 +2195,23 @@ function setMenuHidden(hide) {
   else toast('Menu hidden. Tap the button on your left wrist to bring it back.', 5000);
 }
 function driveFromHeadset() { loadDrive().then(() => KBDrive.open()).catch(e => toast('Drive mode: ' + e.message + '.', 7000)); }
+// Poker from the headset: makes sure you're in a hangout (it starts one if not), opens the casino if it's
+// yours to choose, and puts the poker panel at the table so you can pick a seat.
+async function pokerFromHeadset() {
+  try {
+    await loadHang();
+    if (!KBHang.active()) await KBHang.invite();
+    if (!KBHang.active()) return;
+    const mine = !KBHang.isHost || KBHang.isHost();
+    if (App.env !== 'garage' || App.garageLook !== 'casino') {
+      if (!mine) { toast('Ask the host to open the casino: Pit garage, then Casino on their menu.', 7000); return; }
+      if (App.env !== 'garage') setEnv('garage');
+      await loadGarage(); setLook('casino');
+    }
+    await window.KBLoadPoker(); KBPoker.openXR();
+    toast('The poker table is behind you in the casino. Pick a seat on the panel at the table.', 6000);
+  } catch (e) { toast('Poker: ' + (e.message || e) + '.', 7000); }
+}
 function inviteFromHeadset() { loadHang().then(() => KBHang.invite()).then(() => { App.uiDirty = true; }).catch(e => toast('Hangout: ' + e.message + '.', 7000)); }
 const wristFace = (label, icon) => [false, true].map(hot => {
   const cv = document.createElement('canvas'); cv.width = cv.height = 128; const c = cv.getContext('2d');
@@ -2450,14 +2467,24 @@ function setDepthRange() {
   const near = xr ? 0.1 : 0.05, far = fullDrive ? 12000 : xr ? 1500 : (drive || panelView() ? 20000 : 3000);
   if (camera.near !== near || camera.far !== far) { camera.near = near; camera.far = far; camera.updateProjectionMatrix(); }
 }
+const tickErrs = new Set();
+function safeTick(name, fn) {
+  try { fn(); } catch (err) {
+    if (tickErrs.has(name)) return; tickErrs.add(name); console.error(err);
+    window.__kbErr && window.__kbErr(`${err.message} (in ${name})`);
+    try { toast(`Something went wrong in the ${name} part: ${err.message}. Screenshot this and send it to me.`, 10000); } catch (e) {} // visible in the headset too
+  }
+}
 function frameBody(time, frame) {
   setDepthRange();
   const now = performance.now(), dt = Math.min(0.1, App.lastT ? (now - App.lastT) / 1000 : 0.016); App.lastT = now; frameNo++;
-  if (window.KBHang) KBHang.frame(dt, frame); // voice and avatars keep running in every mode
-  if (window.KBGarage) KBGarage.frame(dt);
-  if (window.KBPoker) KBPoker.frame(dt, frame);
-  if (window.KBWeather) KBWeather.frame(dt);
-  xrBodyTick(frame, dt);
+  // Each add-on runs on its own: an error in one (say the garage) must not stop the others (say poker)
+  // from drawing, which is what it used to do, every frame, without anything showing on screen.
+  safeTick('hangout', () => window.KBHang && KBHang.frame(dt, frame)); // voice and avatars keep running in every mode
+  safeTick('garage', () => window.KBGarage && KBGarage.frame(dt));
+  safeTick('poker', () => window.KBPoker && KBPoker.frame(dt, frame));
+  safeTick('weather', () => window.KBWeather && KBWeather.frame(dt));
+  safeTick('headset', () => xrBodyTick(frame, dt));
   if (window.KBDrive && KBDrive.active) { KBDrive.frame(dt, frame); return; }
   if (App.source === 'replay') Replay.tick(dt);
   if (App.source === 'live') Live.tick();
@@ -2621,7 +2648,7 @@ $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
 const HANG_VER = '6';
-const POKER_VER = '5';
+const POKER_VER = '6';
 let pokerLoading = null;
 window.KBLoadPoker = function loadPoker() { // poker and race bets, for people in a hangout
   if (window.KBPoker) return Promise.resolve();
