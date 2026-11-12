@@ -2088,7 +2088,7 @@ function drawXRPanel() {
     c.fillText('move it to the left window slot, then minimize Kerbside.', 240, y5 + 50);
   }
   const y6 = 1012, room = window.KBHang && KBHang.active() && KBHang.code ? KBHang.code() : '';
-  btn(32, y6, 250, 'Drive this circuit', false, driveFromHeadset);
+  btn(32, y6, 250, window.KBHang && KBHang.active() && KBHang.others && KBHang.others() > 0 ? 'Race friends here' : 'Drive this circuit', false, driveFromHeadset);
   btn(292, y6, 250, room ? 'Invite · room ' + room : 'Invite friends', !!room, inviteFromHeadset);
   btn(552, y6, 230, App.sticks ? 'Thumbsticks: on' : 'Thumbsticks: off', App.sticks, () => setSticks(!App.sticks));
   btn(792, y6, 200, 'Hide menu', false, () => setMenuHidden(true));
@@ -2219,7 +2219,11 @@ function setMenuHidden(hide) {
   if (!App.menuHidden) { const head = xrHead(), f = xrForward(); uiMesh.position.copy(head).addScaledVector(f, 0.85); uiMesh.position.y = head.y - 0.12; uiMesh.lookAt(head); drawXRPanel(); }
   else toast('Menu hidden. Tap the button on your left wrist to bring it back.', 5000);
 }
-function driveFromHeadset() { loadDrive().then(() => KBDrive.open()).catch(e => toast('Drive mode: ' + e.message + '.', 7000)); }
+function driveFromHeadset() { // in a hangout with friends, this sets up a race and brings them all into it
+  const withFriends = window.KBHang && KBHang.active() && KBHang.others && KBHang.others() > 0;
+  loadDrive().then(() => { KBDrive.open(); if (withFriends) KBDrive.raceFriends(); }).catch(e => toast('Drive mode: ' + e.message + '.', 7000));
+}
+function joinDriveRace(code, from) { loadDrive().then(() => KBDrive.joinFriends(code, from)).catch(e => toast('Drive mode: ' + e.message + '.', 7000)); }
 // Poker from the headset: makes sure you're in a hangout (it starts one if not), opens the casino if it's
 // yours to choose, and puts the poker panel at the table so you can pick a seat.
 // Pointing at a glowing seat in the casino: starts a room with friends if you aren't in one, then sits you there.
@@ -2655,6 +2659,7 @@ setPanels(true, !narrow()); // menu open on every screen size; on phones the ord
 
 /* ---- Drive mode (separate file, loaded on first use) ---- */
 window.KB = {
+  joinDriveRace,
   _vr: () => ({ wristBtn, resetBtn, handRigs, xtMesh, setMenuHidden, resetView }),
   THREE, App, $, store, toast, OF1, isoMs, iso, hexColor, lastLE, rr,
   scene, renderer, camera, modelGroup, realWorld, REAL, onLayer, sky, modelGround, FOG, BG,
@@ -2666,7 +2671,7 @@ window.KB = {
 (function loadWeather() { // circuit weather: menu section, table sign, alerts
   const sc = document.createElement('script'); sc.src = 'forecast-panel.js?v=4'; sc.async = true; document.head.appendChild(sc);
 })();
-const DRIVE_VER = '8'; // bump whenever drive.js changes, so devices don't keep an old copy
+const DRIVE_VER = '9'; // bump whenever drive.js changes, so devices don't keep an old copy
 let driveLoading = null;
 function loadDrive() {
   if (window.KBDrive) return Promise.resolve();
@@ -2683,7 +2688,7 @@ document.querySelectorAll('#lookSeg button').forEach(b => b.onclick = () => setL
 $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
-const HANG_VER = '7';
+const HANG_VER = '8';
 const POKER_VER = '7';
 let pokerLoading = null;
 window.KBLoadPoker = function loadPoker() { // poker and race bets, for people in a hangout

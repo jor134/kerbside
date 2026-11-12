@@ -223,7 +223,7 @@ if (!window.KB) return; // loaded for testing only
 /* =====================================================================
    Game: everything that touches the page, the 3D scene or the headset
    ===================================================================== */
-const DRIVE_BUILD = 8;
+const DRIVE_BUILD = 9;
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const Sim = makeSim(THREE);
 const { clamp, wrapA, wrapD } = Sim;
@@ -1092,8 +1092,20 @@ const ray = new THREE.Raycaster(), rm = new THREE.Matrix4();
 function raceFriends() {
   const code = window.KBHang && KBHang.active() ? KBHang.code() : '';
   if (!code) { toast('Racing friends needs a hangout: go back and choose Invite friends on the menu first.', 7000); return; }
+  if (!D.track) { toast('Load a circuit first: the race uses it.'); return; }
   cfg.type = 'online'; saveCfg();
   if (!Net.ws || Net.code !== code) { Net.connect(code); Net.pendingSetup = true; }
+  KBHang.send({ t: 'drive', code }); // everyone else in the hangout is brought into this race
+  UI.refresh();
+}
+// A friend in your hangout set up a race: join it, unless you're in the middle of a race of your own.
+function joinFriends(code, from) {
+  if (Net.ws && Net.code === code) return;
+  if (D.active && (D.state === 'race' || D.state === 'lights')) { toast(`${from} set up a race with friends. Finish this one, then choose Race friends to join.`, 8000); return; }
+  if (!D.active) KBDrive.open();
+  cfg.type = 'online'; saveCfg();
+  Net.connect(code); Net.pendingSetup = false;
+  toast(`${from} set up a race on their circuit, and you’ve joined. Waiting for them to start.`, 7000);
   UI.refresh();
 }
 // Chips on a friends' race: the race host opens the bet, it closes at the start, and the winner settles it.
@@ -1376,6 +1388,7 @@ body.driving #bar, body.driving #dock, body.driving #board, body.driving #transp
     m.querySelectorAll('[data-col]').forEach(b => b.onclick = () => { cfg.color = b.dataset.col; saveCfg(); if (Net.ws) Net.send({ t: 'hello', name: playerName(), color: cfg.color }); this.refresh(); });
     on('dCreate', 'onclick', () => {
       if (!D.track) { toast('Load a circuit first; the room uses it.'); return; }
+      if (window.KBHang && KBHang.active()) { raceFriends(); return; } // in a hangout: race the people in it
       Net.connect(roomCode()); Net.pendingSetup = true;
     });
     on('dJoin', 'onclick', () => { const c = ($('#dCode').value || '').toUpperCase().replace(/[^A-Z]/g, ''); if (c.length !== 4) { toast('Room codes are 4 letters.'); return; } Net.connect(c); });
@@ -1523,7 +1536,7 @@ const Drive = {
     KB.setGhostPost(null);
     if (renderer.xr.isPresenting) { KB.uiMesh.visible = true; for (const c of KB.controllers) c.userData.line.visible = true; KB.positionPanels(); }
   },
-  frame, onSelect: onSelectXR, recenter,
+  frame, onSelect: onSelectXR, recenter, joinFriends, raceFriends,
   allowMapGestures() { return D.view === 'rc'; },
   _D: D, _Sim: Sim, _cockpit: cockpit, _menu: () => xmHits, _net: Net
 };

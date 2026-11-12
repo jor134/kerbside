@@ -5,7 +5,7 @@
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const renderer = KB.renderer;
-const HANG_BUILD = 7;
+const HANG_BUILD = 8;
 const COLORS = ['#D2342B', '#F28A1E', '#E8C33A', '#2F8F4E', '#2BB5A0', '#2E6FD9', '#8E5BD6', '#E66BB0', '#C9CED3', '#F2F2EF'];
 
 const me = Object.assign({ name: '', color: COLORS[Math.floor(Math.random() * COLORS.length)], follow: true }, store.get('hang:me', {}));
@@ -108,6 +108,8 @@ function onMsg(m) {
       if (was !== App.env) toast(m.env === 'garage' ? 'The host moved everyone into the pit garage.' : 'The host switched everyone to their own rooms.', 4000);
       else if (wasLook !== App.garageLook) toast(App.garageLook === 'casino' ? 'The host opened the casino.' : 'The host switched back to the team garage.', 4000);
     }
+  } else if (m.t === 'drive') { // a friend set up a race on their circuit: join it
+    if (KB.joinDriveRace) KB.joinDriveRace(m.code, m.from);
   } else if (m.t === 'pk') {
     if (window.KBPoker) KBPoker.onMsg(m);
   } else if (m.t === 'full') {
@@ -683,7 +685,7 @@ async function inviteFromHeadset() {
 }
 const Hang = {
   open(prefill) { UI.build(); if (prefill) H.pending = String(prefill).toUpperCase(); UI.show(true); },
-  join, leave, frame, onSelect, publishEnv, send, pid: () => pid, myId: () => H.id, invite: inviteFromHeadset, code: () => (H.joined ? H.code : ''), name: () => myName(),
+  join, leave, frame, onSelect, publishEnv, send, pid: () => pid, myId: () => H.id, invite: inviteFromHeadset, code: () => (H.joined ? H.code : ''), others: () => H.peers.filter(p => p.id !== H.id).length, name: () => myName(),
   active() { return H.joined; },
   isHost,
   _H: H

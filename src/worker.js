@@ -792,6 +792,10 @@ export class HangRoom extends DurableObject {
         if (m.look === 'team' || m.look === 'casino') this.look = m.look;
         this.broadcast({ t: 'env', env: m.env, look: this.look || 'team' }, id);
         break;
+      case 'drive': // someone set up a friends' race: bring everyone else in the hangout into it
+        if (!/^[A-Z]{4}$/.test(String(m.code || ''))) return;
+        this.broadcast({ t: 'drive', code: m.code, from: p.name || 'A friend' }, id);
+        break;
       case 'pk': this.onPoker(id, p, m); break;
       case 'bet': this.onBet(id, p, m); break;
       case 'ping':
