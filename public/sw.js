@@ -1,9 +1,9 @@
 // Kerbside service worker: keeps an offline copy of the app shell and satellite tiles.
 // The page itself is always fetched fresh when online, so a stale copy can't break a new version.
-const CACHE = 'kerbside-v50';
+const CACHE = 'kerbside-v51';
 const TILES = 'kerbside-tiles';
 const TILE_HOSTS = ['server.arcgisonline.com', 'api.maptiler.com', 'raw.githubusercontent.com'];
-const SHELL = ['manifest.webmanifest', 'icon-192.png', 'icon-512.png',
+const SHELL = ['manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'models/f1/car.glb',
   'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'];
 
 // A response that came through a redirect can't be used for a page load (Safari shows a blank page).
