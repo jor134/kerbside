@@ -564,7 +564,7 @@ const asphaltMat = KBMat({ color: 0x3b4349, side: THREE.DoubleSide }, 'asphalt')
 const lineMat = KBMat({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }, 'plastic');
 const slabMat = KBMat({ color: 0x5b8a4e }, 'matte');
 const slabEdgeMat = KBMat({ color: 0xa8916a, side: THREE.DoubleSide }, 'polished');
-const darkMat = KBMat({ color: 0x1c1f22 }, 'carbon');
+const darkMat = KBMat({ color: 0x1c1f22, side: THREE.DoubleSide }, 'carbon');
 
 function ribbonGeo(tr, o0, o1, lift, colorAt) {
   const N = tr.N, pos = new Float32Array(N * 6), nor = new Float32Array(N * 6), col = colorAt ? new Float32Array(N * 6) : null, idx = [];
@@ -709,31 +709,64 @@ const postGhostMat = KBMat({ color: 0x1c1f22, transparent: true, opacity: 0.12, 
 // decals and simplified; see models/f1/LICENSE.md). Same frame as the built-in car: nose towards +z, wheels on y = 0,
 // 5.6 m long. When it arrives its shapes replace the built-in ones in place, so every car already on screen changes too;
 // if it can't load, the built-in car stays. Paint goes to the team-colour body, everything else to the dark parts.
+// Smooth shading with hard edges kept: each corner's normal averages the faces around it that turn by
+// less than 50 degrees, so curved bodywork shades smoothly while wing edges and creases stay sharp.
+function creasedNormals(pos, angleDeg = 50) {
+  const nt = pos.length / 9, fa = new Float32Array(nt * 3), fu = new Float32Array(nt * 3), lim = Math.cos(angleDeg * Math.PI / 180);
+  for (let t = 0; t < nt; t++) {
+    const o = t * 9, ax = pos[o + 3] - pos[o], ay = pos[o + 4] - pos[o + 1], az = pos[o + 5] - pos[o + 2], bx = pos[o + 6] - pos[o], by = pos[o + 7] - pos[o + 1], bz = pos[o + 8] - pos[o + 2];
+    const nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx, l = Math.hypot(nx, ny, nz) || 1;
+    fa[t * 3] = nx; fa[t * 3 + 1] = ny; fa[t * 3 + 2] = nz; fu[t * 3] = nx / l; fu[t * 3 + 1] = ny / l; fu[t * 3 + 2] = nz / l;
+  }
+  const key = k => Math.round(pos[k * 3] * 1e4) + ',' + Math.round(pos[k * 3 + 1] * 1e4) + ',' + Math.round(pos[k * 3 + 2] * 1e4);
+  const around = new Map();
+  for (let k = 0; k < nt * 3; k++) { const s = key(k); let a = around.get(s); if (!a) around.set(s, a = []); a.push(k / 3 | 0); }
+  const out = new Float32Array(pos.length);
+  for (let k = 0; k < nt * 3; k++) {
+    const t = k / 3 | 0; let x = 0, y = 0, z = 0;
+    for (const u of around.get(key(k))) if (fu[t * 3] * fu[u * 3] + fu[t * 3 + 1] * fu[u * 3 + 1] + fu[t * 3 + 2] * fu[u * 3 + 2] >= lim) { x += fa[u * 3]; y += fa[u * 3 + 1]; z += fa[u * 3 + 2]; }
+    const l = Math.hypot(x, y, z);
+    if (l > 1e-12) { out[k * 3] = x / l; out[k * 3 + 1] = y / l; out[k * 3 + 2] = z / l; } else { out[k * 3] = fu[t * 3]; out[k * 3 + 1] = fu[t * 3 + 1]; out[k * 3 + 2] = fu[t * 3 + 2]; }
+  }
+  return out;
+}
+// The downloaded car (models/f1: "Ferrari F1 2019" by valvetin, CC BY 4.0, stripped to solid colours with no
+// decals and simplified; see models/f1/LICENSE.md). Same frame as the built-in car: nose towards +z, wheels on y = 0,
+// 5.6 m long. When it arrives its shapes replace the built-in ones in place, so every car already on screen changes too;
+// if it can't load, the built-in car stays. car.glb (31k triangles) is for full-size cars; car_mini.glb (10k) for the
+// small cars on the table. Paint goes to the team-colour body, everything else to the dark parts. Car materials are
+// drawn from both sides, so thin parts like the wings have a back without storing every triangle twice.
+CarGeo.miniBody = CarGeo.body.clone(); CarGeo.miniDark = CarGeo.dark.clone();
+async function readCarModel(url) {
+  const buf = await (await fetch(url)).arrayBuffer(), dv = new DataView(buf), jl = dv.getUint32(12, true);
+  const j = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jl))), bin = 20 + jl + 8;
+  const read = i => { const a = j.accessors[i], v = j.bufferViews[a.bufferView], o = bin + (v.byteOffset || 0) + (a.byteOffset || 0), n = a.count * (a.type === 'VEC3' ? 3 : 1);
+    return a.componentType === 5126 ? new Float32Array(buf.slice(o, o + n * 4)) : a.componentType === 5125 ? new Uint32Array(buf.slice(o, o + n * 4)) : new Uint16Array(buf.slice(o, o + n * 2)); };
+  const groups = { paint: [], dark: [] };
+  for (const m of j.meshes) {
+    const p = m.primitives[0], P = read(p.attributes.POSITION), I = read(p.indices), out = new Float32Array(I.length * 3);
+    for (let k = 0; k < I.length; k++) { out[k * 3] = P[I[k] * 3]; out[k * 3 + 1] = P[I[k] * 3 + 1]; out[k * 3 + 2] = P[I[k] * 3 + 2]; }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(out, 3)); g.setAttribute('normal', new THREE.BufferAttribute(creasedNormals(out), 3));
+    (m.name === 'paint' ? groups.paint : groups.dark).push(g);
+  }
+  return groups;
+}
 (async function loadCarModel() {
+  const swap = (geo, list) => { const m = mergeGeos(list); geo.dispose(); geo.setAttribute('position', m.attributes.position); geo.setAttribute('normal', m.attributes.normal); geo.computeBoundingSphere(); geo.computeBoundingBox(); };
   try {
-    const buf = await (await fetch('models/f1/car.glb')).arrayBuffer(), dv = new DataView(buf), jl = dv.getUint32(12, true);
-    const j = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jl))), bin = 20 + jl + 8;
-    const read = i => { const a = j.accessors[i], v = j.bufferViews[a.bufferView], o = bin + (v.byteOffset || 0) + (a.byteOffset || 0), n = a.count * (a.type === 'VEC3' ? 3 : 1);
-      return a.componentType === 5126 ? new Float32Array(buf.slice(o, o + n * 4)) : a.componentType === 5125 ? new Uint32Array(buf.slice(o, o + n * 4)) : new Uint16Array(buf.slice(o, o + n * 2)); };
-    const groups = { paint: [], dark: [] };
-    for (const m of j.meshes) {   // faceted: every triangle gets its own corners, so the shading stays crisp on the simplified surface
-      const p = m.primitives[0], P = read(p.attributes.POSITION), I = read(p.indices), out = new Float32Array(I.length * 6);
-      for (let k = 0; k < I.length; k++) { out[k * 3] = P[I[k] * 3]; out[k * 3 + 1] = P[I[k] * 3 + 1]; out[k * 3 + 2] = P[I[k] * 3 + 2]; }
-      for (let t = 0; t < I.length; t += 3) for (let c = 0; c < 3; c++) { const src = (t + 2 - c) * 3, dst = (I.length + t + c) * 3; out[dst] = out[src]; out[dst + 1] = out[src + 1]; out[dst + 2] = out[src + 2]; }   // a back face for every triangle: wings and fins are thin single sheets
-      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(out, 3)); g.computeVertexNormals();
-      (m.name === 'paint' ? groups.paint : groups.dark).push(g);
-    }
-    const swap = (geo, list) => { const m = mergeGeos(list); geo.dispose(); geo.setAttribute('position', m.attributes.position); geo.setAttribute('normal', m.attributes.normal); geo.computeBoundingSphere(); geo.computeBoundingBox(); };
-    swap(CarGeo.body, groups.paint); swap(CarGeo.bodyOpen, groups.paint); swap(CarGeo.dark, groups.dark);
+    const full = await readCarModel('models/f1/car.glb');
+    swap(CarGeo.body, full.paint); swap(CarGeo.bodyOpen, full.paint); swap(CarGeo.dark, full.dark);
     const none = new THREE.BufferGeometry(); none.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3)); none.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(9), 3));
     swap(CarGeo.post, [none]);   // the model has its own halo; the separate centre post is no longer needed
     CarGeo.model = true;
+    const mini = await readCarModel('models/f1/car_mini.glb').catch(() => full);
+    swap(CarGeo.miniBody, mini.paint); swap(CarGeo.miniDark, mini.dark);
   } catch (e) { console.warn('car model not loaded, keeping the built-in car', e); }
 })();
-function carMesh(color) {
+function carMesh(color, mini) { // mini: the lighter model, for the small cars on the table
   const g = new THREE.Group();
-  g.add(new THREE.Mesh(CarGeo.body, KBMat({ color }, 'paint')));
-  g.add(new THREE.Mesh(CarGeo.dark, darkMat));
+  g.add(new THREE.Mesh(mini ? CarGeo.miniBody : CarGeo.body, KBMat({ color, side: THREE.DoubleSide }, 'paint')));
+  g.add(new THREE.Mesh(mini ? CarGeo.miniDark : CarGeo.dark, darkMat));
   const post = new THREE.Mesh(CarGeo.post, darkMat); g.add(post); g.userData.post = post;
   return g;
 }
@@ -776,7 +809,7 @@ function ensureCar(num, info) {
 }
 function rebuildCarMeshes(car) {
   if (car.model) { modelGroup.remove(car.model); realWorld.remove(car.real); modelGroup.remove(car.label); }
-  car.model = carMesh(car.color); car.model.visible = false; modelGroup.add(car.model);
+  car.model = carMesh(car.color, true); car.model.visible = false; modelGroup.add(car.model);
   car.real = onLayer(carMesh(car.color), REAL); car.real.visible = false; realWorld.add(car.real);
   car.label = labelSprite(car.tla, car.color); car.label.visible = false; modelGroup.add(car.label);
   applyCarScale(car);
@@ -978,7 +1011,7 @@ function setDrawTrack(on) {
 function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
 App.env = store.get('env', 'passthrough'); App.garageLook = store.get('garageLook', 'team'); App.ptWindow = store.get('ptWindow', false); App.ptSize = store.get('ptSize', 'M');
 let garageLoading = null;
-const GARAGE_VER = '13';
+const GARAGE_VER = '14';
 function loadGarage() {
   if (window.KBGarage) return Promise.resolve();
   return garageLoading || (garageLoading = new Promise((res, rej) => {
@@ -2697,7 +2730,7 @@ window.KB = {
 (function loadWeather() { // circuit weather: menu section, table sign, alerts
   const sc = document.createElement('script'); sc.src = 'forecast-panel.js?v=4'; sc.async = true; document.head.appendChild(sc);
 })();
-const DRIVE_VER = '9'; // bump whenever drive.js changes, so devices don't keep an old copy
+const DRIVE_VER = '10'; // bump whenever drive.js changes, so devices don't keep an old copy
 let driveLoading = null;
 function loadDrive() {
   if (window.KBDrive) return Promise.resolve();

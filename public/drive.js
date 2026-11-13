@@ -223,7 +223,7 @@ if (!window.KB) return; // loaded for testing only
 /* =====================================================================
    Game: everything that touches the page, the 3D scene or the headset
    ===================================================================== */
-const DRIVE_BUILD = 9;
+const DRIVE_BUILD = 10;
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const Sim = makeSim(THREE);
 const { clamp, wrapA, wrapD } = Sim;
@@ -253,8 +253,8 @@ const D = {
 /* ---------------- Car meshes ---------------- */
 function carGroup(color, opacity) {
   const g = new THREE.Group(), t = opacity < 1;
-  g.add(new THREE.Mesh(KB.CarGeo.body, KBMat({ color, transparent: t, opacity, depthWrite: !t }, t ? 'matte' : 'paint')));
-  const darkM = t ? KBMat({ color: 0x1c1f22, transparent: true, opacity, depthWrite: false }, 'matte') : KB.darkMat;
+  g.add(new THREE.Mesh(KB.CarGeo.body, KBMat({ color, transparent: t, opacity, depthWrite: !t, side: THREE.DoubleSide }, t ? 'matte' : 'paint')));
+  const darkM = t ? KBMat({ color: 0x1c1f22, transparent: true, opacity, depthWrite: false, side: THREE.DoubleSide }, 'matte') : KB.darkMat;
   g.add(new THREE.Mesh(KB.CarGeo.dark, darkM));
   const post = new THREE.Mesh(KB.CarGeo.post, darkM); g.add(post); g.userData.post = post;
   return g;

@@ -154,3 +154,5 @@ The first 1,000 GB of TURN traffic each month is free. A voice stream is roughly
 ## Credits
 
 Race car: "Ferrari F1 2019" by valvetin (https://sketchfab.com/3d-models/ferrari-f1-2019-1b050bffe4e749b586b4782ee7ff4fd0), CC BY 4.0, stripped to solid colours with every decal removed and simplified (`public/models/f1`, see its LICENSE.md). The built-in car stays if the model can't load.
+
+The car is smooth-shaded with hard edges kept (surfaces that turn by more than 50° stay sharp). Full-size cars use `car.glb` (31k triangles); the small cars on the table use `car_mini.glb` (10k, made with `tools/mini_car.py`), which keeps the headset frame rate up with twenty cars on screen.
