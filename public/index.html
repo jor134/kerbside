@@ -1012,7 +1012,7 @@ function setDrawTrack(on) {
 function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
 App.env = store.get('env', 'passthrough'); App.garageLook = store.get('garageLook', 'team'); App.ptWindow = store.get('ptWindow', false); App.ptSize = store.get('ptSize', 'M');
 let garageLoading = null;
-const GARAGE_VER = '15';
+const GARAGE_VER = '16';
 function loadGarage() {
   if (window.KBGarage) return Promise.resolve();
   return garageLoading || (garageLoading = new Promise((res, rej) => {
@@ -2817,7 +2817,7 @@ window.KB = {
 (function loadWeather() { // circuit weather: menu section, table sign, alerts
   const sc = document.createElement('script'); sc.src = 'forecast-panel.js?v=4'; sc.async = true; document.head.appendChild(sc);
 })();
-const DRIVE_VER = '10'; // bump whenever drive.js changes, so devices don't keep an old copy
+const DRIVE_VER = '11'; // bump whenever drive.js changes, so devices don't keep an old copy
 let driveLoading = null;
 function loadDrive() {
   if (window.KBDrive) return Promise.resolve();

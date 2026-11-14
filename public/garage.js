@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 15;
+const GARAGE_BUILD = 16;
 
 /* ---------------- Materials ---------------- */
 const toon = (c, gloss) => KBMat({ color: c }, gloss);
@@ -278,7 +278,7 @@ function buildCasino() {
     box(ch, 0.48, 0.1, 0.46, 0, 0.48, 0, red); box(ch, 0.48, 0.55, 0.08, 0, 0.8, -0.23, red); box(ch, 0.5, 0.04, 0.5, 0, 0.42, 0, gold);
     for (const [dx, dz] of [[-0.2, -0.2], [0.2, -0.2], [-0.2, 0.2], [0.2, 0.2]]) box(ch, 0.04, 0.42, 0.04, dx, 0.21, dz, gold);
   }
-  const anchor = new THREE.Group(); anchor.position.set(POKER.x, POKER.top + 0.0065, POKER.z); // 1.5 mm above the felt's surface, so nothing lying on it fights with it g.add(anchor); // poker.js puts cards and chips here
+  const anchor = new THREE.Group(); anchor.position.set(POKER.x, POKER.top + 0.0065, POKER.z); g.add(anchor); // poker.js puts cards and chips here, 1.5 mm above the felt's surface so nothing lying on it fights with it
   // glowing seats: point at one and click (or pinch) to sit there. Shown in the headset while you're standing.
   const markers = [];
   for (let i = 0; i < 6; i++) {

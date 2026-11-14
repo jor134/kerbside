@@ -223,7 +223,7 @@ if (!window.KB) return; // loaded for testing only
 /* =====================================================================
    Game: everything that touches the page, the 3D scene or the headset
    ===================================================================== */
-const DRIVE_BUILD = 10;
+const DRIVE_BUILD = 11;
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const Sim = makeSim(THREE);
 const { clamp, wrapA, wrapD } = Sim;
@@ -889,7 +889,7 @@ const cockpit = (() => {
   const cyl = (p, r, h, x, y, z, m, seg = 12) => { const o = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, seg), m); o.position.set(x, y, z); p.add(o); return o; };
   // cockpit well: padded floor, the rim around the opening, headrest pads beside and behind your head
   box(rig, 0.4, 0.012, 0.88, 0, 0.458, 0.55, pad);
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(1, 0.045, 8, 40), carbon); rim.rotation.x = Math.PI / 2; rim.scale.set(0.285, 0.5, 0.6); rim.position.set(0, 0.675, 0.55); // lies on the well's side walls; ahead and behind it tucks under the bodywork rig.add(rim);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(1, 0.045, 8, 40), carbon); rim.rotation.x = Math.PI / 2; rim.scale.set(0.285, 0.5, 0.6); rim.position.set(0, 0.675, 0.55); rig.add(rim); // lies on the well's side walls; ahead and behind it tucks under the bodywork
   for (const sx of [-1, 1]) box(rig, 0.07, 0.27, 0.36, sx * 0.275, 0.8, 0.3, pad);
   box(rig, 0.5, 0.2, 0.08, 0, 0.9, 0.12, pad);
   // dash bulkhead ahead of the wheel, with the wheel's column

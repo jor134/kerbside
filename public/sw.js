@@ -1,6 +1,6 @@
 // Kerbside service worker: keeps an offline copy of the app shell and satellite tiles.
 // The page itself is always fetched fresh when online, so a stale copy can't break a new version.
-const CACHE = 'kerbside-v54';
+const CACHE = 'kerbside-v55';
 const TILES = 'kerbside-tiles';
 const TILE_HOSTS = ['server.arcgisonline.com', 'api.maptiler.com', 'raw.githubusercontent.com'];
 const SHELL = ['manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'models/f1/car.glb', 'models/f1/car_mini.glb',
