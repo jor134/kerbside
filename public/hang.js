@@ -5,7 +5,7 @@
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const renderer = KB.renderer;
-const HANG_BUILD = 9;
+const HANG_BUILD = 10;
 const COLORS = ['#D2342B', '#F28A1E', '#E8C33A', '#2F8F4E', '#2BB5A0', '#2E6FD9', '#8E5BD6', '#E66BB0', '#C9CED3', '#F2F2EF'];
 
 const me = Object.assign({ name: '', color: COLORS[Math.floor(Math.random() * COLORS.length)], follow: true }, store.get('hang:me', {}));
@@ -456,6 +456,7 @@ function poseBody(a, d, T, fx, fz, dt) {
 function updateAvatars(dt) {
   const T = tableFrame(), driving = window.KBDrive && KBDrive.active;
   const show = T && App.view === 'tabletop' && !driving && App.track;
+  const myEyeY = renderer.xr.isPresenting ? KB.xrHead().y : -1e9;
   for (const p of H.peers) {
     if (p.id === H.id) continue;
     const a = getAvatar(p.id); a.g.visible = !!show;
@@ -469,7 +470,8 @@ function updateAvatars(dt) {
     a.head.position.copy(a.cur);
     a.head.rotation.set(Math.asin(Math.max(-0.9, Math.min(0.9, fLoc[1] || 0))) * 0.8, Math.atan2(-fx, -fz), 0, 'YXZ');
     poseBody(a, d, T, fx, fz, dt);
-    a.label.position.set(a.cur.x, a.cur.y + 0.26, a.cur.z);
+    // in the headset, a name tag never sits lower than 30 cm over your own eyes, so a friend's tag can't block your view
+    a.label.position.set(a.cur.x, Math.max(a.cur.y + 0.3, myEyeY + 0.3), a.cur.z);
     const au = H.audio.get(p.id), lvl = au && !p.muted ? au.level() : 0;
     a.ring.material.opacity = Math.min(0.9, lvl * 1.6);
     a.ring.scale.setScalar(1 + lvl * 0.35);
