@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 11;
+const POKER_BUILD = 12;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -79,7 +79,7 @@ function lookChanged() { placeMe(); P.dirty = true; }
 function placeHere() { if (P.mySeat >= 0 && window.KBGarage) { KBGarage.seatAt(P.mySeat, true); resetBar(); buzz(0.4, 30); toast('Your seat is where you are now.', 2500); } }
 
 /* ---------------- Actions ---------------- */
-const act = (a, amount) => send({ t: 'pk', a: 'act', act: a, amount });
+const act = (a, amount) => { send({ t: 'pk', a: 'act', act: a, amount }); window.KBTutEv && KBTutEv('act'); };
 function opts() { const s = P.state; return s && s.toAct === P.mySeat && P.mySeat >= 0 ? s.options : null; }
 function potSize() { const s = P.state; return s ? s.pot + s.seats.reduce((a, x) => a + (x ? x.bet : 0), 0) : 0; }
 function clampRaise(v) { const o = opts(); if (!o) return v; return Math.max(o.minTo, Math.min(o.maxTo, Math.round(v / 50) * 50 || o.minTo)); }
@@ -554,6 +554,13 @@ function buzz(v, ms) {
   const session = renderer.xr.getSession(); if (!session) return;
   for (const src of session.inputSources) { const a = src.gamepad && src.gamepad.hapticActuators && src.gamepad.hapticActuators[0]; if (a && a.pulse) try { a.pulse(v, ms); } catch (e) {} }
 }
+// Knuckles (the base joint of each finger) and the wrist, in world space, for the chip trick
+const KN = ['wrist', 'index-finger-phalanx-proximal', 'middle-finger-phalanx-proximal', 'ring-finger-phalanx-proximal', 'pinky-finger-phalanx-proximal'];
+function knuckles(src, frame, ref) {
+  if (!frame.getJointPose) return null; const out = [];
+  for (const n of KN) { const j = src.hand.get(n), p = j && frame.getJointPose(j, ref), q = p && p.transform && p.transform.position; if (!q) return null; out.push(new THREE.Vector3(q.x, q.y, q.z)); }
+  return out;
+}
 function readHands(frame) {
   const session = renderer.xr.getSession(), ref = renderer.xr.getReferenceSpace(), out = [];
   if (!session || !frame || !ref) return out;
@@ -572,7 +579,7 @@ function readHands(frame) {
       if (g) { const p = g.transform.position; pos = new THREE.Vector3(p.x, p.y, p.z); }
       grab = !!(src.gamepad && src.gamepad.buttons[1] && src.gamepad.buttons[1].pressed);
     }
-    if (pos) out.push({ src, pos, grab });
+    if (pos) out.push({ src, pos, grab, knuckles: src.hand ? knuckles(src, frame, ref) : null });
   }
   return out;
 }
@@ -607,12 +614,13 @@ function handsFrame(dt, frame) {
     if (st0.tap && (h.grab || now - st0.tap > 400)) st0.tap = 0;
     if (st0.tap && local.y > 0.05 && now - (P.lastKnock || 0) > 700) { st0.tap = 0; P.lastKnock = now; knock(); }
     if (h.grab && !st0.grab && !mine) { // grab starts
-      if (bothNear) { helds.set(h.src, { objs: free.slice().sort((x, y) => x.userData.k - y.userData.k), kind: 'card' }); buzz(0.5, 30); }
-      else if (cardNear) { helds.set(h.src, { objs: [cardNear], kind: 'card' }); buzz(0.4, 25); }
+      if (bothNear) { helds.set(h.src, { objs: free.slice().sort((x, y) => x.userData.k - y.userData.k), kind: 'card' }); buzz(0.5, 30); window.KBTutEv && KBTutEv('cards'); }
+      else if (cardNear) { helds.set(h.src, { objs: [cardNear], kind: 'card' }); buzz(0.4, 25); window.KBTutEv && KBTutEv('cards'); }
       else if (trayNear) { const d = trayNear.userData.denom; helds.set(h.src, { objs: [chipFor(d)], kind: 'chip', denom: d }); buzz(0.3, 20); }
       else if (pendNear) { const d = P.pendingChips.pop(); P.pending -= d; helds.set(h.src, { objs: [chipFor(d)], kind: 'chip', denom: d }); buzz(0.3, 20); }
     }
     const H = helds.get(h.src);
+    if (H && H.kind === 'chip' && trickFrame(H, h, st0, dt)) { st0.grab = h.grab; st0.prevY = local.y; st0.t = now; hands.set(h.src, st0); seen.add(h.src); continue; }
     if (H) {
       if (h.grab) { // follow the hand; cards turn to face you, two of them fanned like a real hand
         if (H.kind === 'card') {
@@ -642,6 +650,53 @@ function handsFrame(dt, frame) {
     seen.add(h.src);
   }
   for (const src of [...helds.keys()]) if (!seen.has(src)) dropHeld(src); // that hand went out of view
+}
+/* Chip trick: hold a chip, turn your hand palm-down and keep it there a moment, and the chip walks across
+   your knuckles, flipping from finger to finger and passing back underneath, like a card-room regular.
+   Turn your palm up, or pinch again, to stop. Hand tracking only (controllers have no fingers to roll over).
+   Friends see it on your avatar's hand. */
+const tv1 = new THREE.Vector3(), tv2 = new THREE.Vector3(), tv3 = new THREE.Vector3(), tq1 = new THREE.Quaternion(), tq2 = new THREE.Quaternion(), Y_AXIS = new THREE.Vector3(0, 1, 0);
+function backOfHand(K, left) { // unit normal out of the back of the hand, from wrist, index and pinky knuckles
+  const a = tv1.copy(K[1]).sub(K[0]), b = tv2.copy(K[4]).sub(K[0]), n = new THREE.Vector3().crossVectors(a, b).normalize();
+  return left ? n : n.multiplyScalar(-1);
+}
+function trickFrame(H, h, st0, dt) { // true while the trick owns this hand
+  const K = h.knuckles; if (!K) { H.trick = null; return false; }
+  const left = h.src.handedness === 'left';
+  const W = K.map(v => T3.anchor.worldToLocal(v.clone())); // into table space, where the chip lives
+  const n = backOfHand(K, left), up = n.y;
+  if (!H.trick) {
+    H.downT = up > 0.7 ? (H.downT || 0) + dt : 0;
+    if (H.downT < 0.8) return false;
+    H.trick = { u: 0 }; H.downT = 0; buzz(0.3, 30); window.KBTutEv && KBTutEv('trick');
+  }
+  const regrab = h.grab && !st0.grab;
+  if (up < 0.1 || regrab) { // stop: back into your fingers if you're pinching, otherwise it goes home
+    H.trick = null; if (!h.grab) dropHeld(h.src); return !h.grab;
+  }
+  H.trick.u += dt * 3.2;
+  const step = Math.floor(H.trick.u) % 3, f = H.trick.u % 1, e = f * f * (3 - 2 * f);
+  const nl = T3.anchor.worldToLocal(tv3.copy(K[0]).add(n)).sub(W[0]).normalize(); // back-of-hand normal, in table space
+  const gap = i => W[i + 1].clone().add(W[i + 2]).multiplyScalar(0.5).addScaledVector(nl, 0.013);
+  const from = gap(step === 2 ? 2 : step), to = gap(step === 2 ? 0 : step + 1), chip = H.objs[0];
+  chip.position.lerpVectors(from, to, e).addScaledVector(nl, step === 2 ? -0.045 * Math.sin(Math.PI * f) : 0.006 * Math.sin(Math.PI * f)); // over the top, or back under the palm
+  const across = W[4].clone().sub(W[1]).normalize(), along = W[1].clone().add(W[4]).multiplyScalar(0.5).sub(W[0]).normalize();
+  tq1.setFromUnitVectors(Y_AXIS, across); tq2.setFromAxisAngle(along, (step === 2 ? 0 : step + e) * Math.PI);
+  chip.quaternion.copy(tq2).multiply(tq1);
+  return true;
+}
+function trickNow() { for (const [src, H] of helds) if (H.trick) return { s: src.handedness === 'left' ? 'l' : 'r', d: H.denom }; return null; }
+// a friend's trick, on their avatar's glove (no finger joints come over the network, so it's a stylised roll)
+const remoteChips = new WeakMap();
+function remoteTrick(glove, denom, dt) {
+  let c = remoteChips.get(glove);
+  if (!denom) { if (c) c.visible = false; return; }
+  if (!c) { c = new THREE.Mesh(chipGeo, chipMat(denom)); c.userData.u = 0; glove.add(c); remoteChips.set(glove, c); }
+  c.visible = true; c.material = chipMat(denom); c.userData.u += dt * 3.2;
+  const step = Math.floor(c.userData.u) % 3, f = c.userData.u % 1, e = f * f * (3 - 2 * f), xs = [-0.025, 0, 0.025];
+  const a = xs[step === 2 ? 2 : step], b = xs[step === 2 ? 0 : step + 1];
+  c.position.set(a + (b - a) * e, step === 2 ? -0.02 - 0.03 * Math.sin(Math.PI * f) : 0.045 + 0.006 * Math.sin(Math.PI * f), 0.02);
+  c.rotation.set(0, 0, Math.PI / 2); c.rotateY((step === 2 ? 0 : step + e) * Math.PI);
 }
 function chipFor(d) { const m = new THREE.Mesh(chipGeo, chipMat(d)); T3.g.add(m); return m; }
 function dropHeld(src) {
@@ -692,5 +747,5 @@ const Race = {
 // For the glowing seats in the casino: who's in seat i, and sitting down from there.
 const ready = () => !!(P.state && P.gotMe);
 const seatName = i => { const st = P.state && P.state.seats[i]; return st ? st.name : null; };
-window.KBPoker = { onMsg, frame, onSelect, placeHere, openXR, barDrag, ready, seatName, sitAt: i => sit(i), wantBots: n => { P.wantBots = n; }, seat: () => P.mySeat, open: openUI, lookChanged, build: POKER_BUILD, race: Race, bal: () => P.bal, _P: P, _hand: handLabel, _T: () => T3, _held: () => ({ held: [...helds.values()].map(h => ({ kind: h.kind, denom: h.denom, n: h.objs.length })), near: nearSomething, hands: [...hands.values()] }) };
+window.KBPoker = { onMsg, frame, onSelect, placeHere, openXR, barDrag, trick: trickNow, remoteTrick, practice, ready, seatName, sitAt: i => sit(i), wantBots: n => { P.wantBots = n; }, seat: () => P.mySeat, open: openUI, lookChanged, build: POKER_BUILD, race: Race, bal: () => P.bal, _P: P, _hand: handLabel, _T: () => T3, _held: () => ({ held: [...helds.values()].map(h => ({ kind: h.kind, denom: h.denom, n: h.objs.length })), near: nearSomething, hands: [...hands.values()] }) };
 })();

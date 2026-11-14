@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 17;
+const GARAGE_BUILD = 18;
 
 /* ---------------- Materials ---------------- */
 const toon = (c, gloss) => KBMat({ color: c }, gloss);
@@ -573,7 +573,7 @@ function canTeleport() {
   return !!built && built.G.visible && App.env === 'garage' && renderer.xr.isPresenting && !App.placing && !App.placingWindow
     && !(window.KBDrive && KBDrive.active) && !(spot && spot.seat != null) && !App.dragging;
 }
-function onMenu(c) { KB.rayFrom(c); return KB.raycaster.intersectObjects([KB.uiMesh, KB.chaseMesh].filter(m => m && m.visible), false).length > 0; }
+function onMenu(c) { KB.rayFrom(c); return KB.raycaster.intersectObjects([KB.uiMesh, KB.chaseMesh, window.KBTut && KBTut._mesh, window.KBPoker && KBPoker.barDrag && KBPoker.barDrag() && KBPoker.barDrag().mesh].filter(m => m && m.visible), false).length > 0; }
 function allowedFloor(x, z) {
   if (Math.hypot(x, z) < 1.0) return false; // not onto the circuit table
   if (look_ === 'casino' && Math.hypot((x - POKER.x) / (POKER.rx + 0.45), (z - POKER.z) / (POKER.rz + 0.45)) < 1) return false; // nor the poker table
@@ -585,7 +585,7 @@ for (const c of KB.controllers) {
   c.addEventListener('selectend', () => {
     if (tp.src !== c) return;
     const go = tp.ok && canTeleport() && !onMenu(c); tp.src = null; tp.ok = false; tpMark.visible = false;
-    if (go) setSpot({ pos: tp.pt.clone(), yaw: null, eye: 1.62, pitch: -0.14, free: true });
+    if (go) { setSpot({ pos: tp.pt.clone(), yaw: null, eye: 1.62, pitch: -0.14, free: true }); window.KBTutEv && KBTutEv('teleport'); }
   });
 }
 function teleportAim() {

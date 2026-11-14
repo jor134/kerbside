@@ -45,6 +45,19 @@ def classify(mi, rgb):
     if mi == 1: return np.where(v < 0.3, 'tyre', 'rim')
     red = (s > 0.45) & (v > 0.3) & ((h < 0.06) | (h > 0.94))
     return np.where(red, 'paint', np.where(v < 0.3, 'carbon', 'metal'))
+def smooth_labels(P, I, cls, rounds=4):
+    """The carbon-fibre weave in the texture reads as a speckle of carbon and metal triangles. Each round, a
+    triangle takes the colour most of its edge neighbours have (its own counts one and a half), which
+    clears the speckle but keeps real panel edges, where whole rows of triangles agree."""
+    names = np.array(sorted(set(cls.tolist()))); lab = np.searchsorted(names, cls)
+    key = np.round(P / 0.0002).astype(np.int64); _, w = np.unique(key, axis=0, return_inverse=True); W = w.reshape(-1)[I]
+    e = np.sort(np.stack([W[:, [0, 1]], W[:, [1, 2]], W[:, [2, 0]]], 1).reshape(-1, 2), 1); tri = np.repeat(np.arange(len(I)), 3)
+    k = e[:, 0] * (W.max() + 1) + e[:, 1]; o = np.argsort(k, kind='stable'); k, tri = k[o], tri[o]
+    same = k[1:] == k[:-1]; a, b = tri[:-1][same], tri[1:][same]
+    for _ in range(rounds):
+        votes = np.zeros((len(I), len(names))); votes[np.arange(len(I)), lab] += 1.5
+        np.add.at(votes, (a, lab[b]), 1); np.add.at(votes, (b, lab[a]), 1); lab = votes.argmax(1)
+    return names[lab]
 for ni, nd in enumerate(j['nodes']):
     if 'mesh' not in nd: continue
     m = j['meshes'][nd['mesh']]; name = m.get('name', '')
@@ -55,6 +68,7 @@ for ni, nd in enumerate(j['nodes']):
         I = acc(p['indices']).reshape(-1, 3).astype(np.int64); UV = acc(p['attributes']['TEXCOORD_0'])
         tex = TEX[mi]; h, w = tex.shape[:2]; uv = UV[I].mean(1); u = (uv[:, 0] % 1) * (w - 1); vv = (uv[:, 1] % 1) * (h - 1)
         cls = classify(mi, tex[vv.astype(int), u.astype(int)])
+        if mi == 0: cls = smooth_labels(P, I, cls)
         for k in groups:
             sel = I[cls == k]
             if len(sel): groups[k][0].append(P); groups[k][1].append(sel)

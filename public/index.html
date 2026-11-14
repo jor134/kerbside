@@ -240,6 +240,7 @@ body:not(.board-open) #board{display:none}
     </div>
     <p class="hint">Raise this until the cars match what's on your TV.</p>
   </section>
+  <button id="tutBtn" class="ghost" style="margin-top:12px;width:100%">Tutorial: first time in the headset</button>
 </aside>
 
 <aside id="board">
@@ -1012,7 +1013,7 @@ function setDrawTrack(on) {
 function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
 App.env = store.get('env', 'passthrough'); App.garageLook = store.get('garageLook', 'team'); App.ptWindow = store.get('ptWindow', false); App.ptSize = store.get('ptSize', 'M');
 let garageLoading = null;
-const GARAGE_VER = '17';
+const GARAGE_VER = '18';
 function loadGarage() {
   if (window.KBGarage) return Promise.resolve();
   return garageLoading || (garageLoading = new Promise((res, rej) => {
@@ -2161,6 +2162,7 @@ function drawXRPanel() {
   const y8 = 1184;
   btn(32, y8, 300, App.xrPage === 'races' ? 'Back to timing' : 'Load a race', App.xrPage === 'races', () => { App.xrPage = App.xrPage === 'races' ? 'main' : 'races'; if (App.xrPage === 'races' && !sessions.length) loadSessionList(App.xrYear || new Date().getFullYear()).then(() => { App.uiDirty = true; }); });
   btn(342, y8, 250, App.source === 'live' ? 'Live: on' : 'Go live', App.source === 'live', () => { App.xrPage = 'main'; showSource('live'); Live.connect(); });
+  btn(602, y8, 180, window.KBTut && KBTut.active() ? 'Tutorial: on' : 'Tutorial', !!(window.KBTut && KBTut.active()), () => { if (!window.KBTut) return; if (KBTut.active()) KBTut.finish(false); else KBTut.start(); });
   btn(792, y8, 200, App.debug ? 'Debug: on' : 'Debug info', !!App.debug, () => { App.debug = !App.debug; App.debugDirty = true; });
   if (App.xrPage === 'races') { // the session picker, in place of the timing board
     App.xrYear = App.xrYear || new Date().getFullYear();
@@ -2201,6 +2203,7 @@ function dragTargets() {
   const t = [];
   if (uiMesh.visible) t.push({ mesh: uiMesh, handle: uv => (1 - uv.y) * UIH < 84, move: p => uiMesh.position.copy(p) });
   const pb = window.KBPoker && KBPoker.barDrag && KBPoker.barDrag(); if (pb) t.push(pb);
+  const tc = window.KBTut && KBTut.dragTarget(); if (tc) t.push(tc);
   return t;
 }
 function dragStart(e) {
@@ -2214,7 +2217,7 @@ function dragStart(e) {
 }
 function dragEnd(e) {
   if (!drag || e.target !== drag.c) return;
-  drag = null; KBLog('drag: done');
+  drag = null; KBLog('drag: done'); window.KBTutEv && KBTutEv('drag');
   setTimeout(() => { App.dragging = false; }, 60); /* the click that follows a drag mustn't teleport you */
 }
 const _dp = new THREE.Vector3(), _dq = new THREE.Vector3();
@@ -2233,6 +2236,7 @@ const raycaster = new THREE.Raycaster(), tmpM = new THREE.Matrix4();
 function rayFrom(c) { tmpM.identity().extractRotation(c.matrixWorld); raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld); raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tmpM); }
 function onSelect(e) {
   const hand = e && e.target ? KB.controllers.indexOf(e.target) : -1;
+  if (window.KBTut && KBTut.onSelect(e)) { KBLog(`click (hand ${hand}): tutorial card`); return; }
   // A glowing casino seat that's lit up ("Click to sit") wins over everything: use the seat that's
   // highlighted, whichever hand's pointer lit it, rather than re-aiming with the hand that clicked.
   const hv = window.KBGarage && KBGarage.hoverSeat ? KBGarage.hoverSeat() : -1;
@@ -2249,7 +2253,7 @@ function onSelect(e) {
   if (hit && hit.object === uiMesh && hit.uv) {
     const px = hit.uv.x * UIW, py = (1 - hit.uv.y) * UIH;
     const h = (App.uiHits || []).find(b => px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h);
-    if (h) { h.fn(); App.uiDirty = true; }
+    if (h) { h.fn(); App.uiDirty = true; window.KBTutEv && KBTutEv('menu'); }
     KBLog(`click (hand ${hand}): menu ${h ? 'button at ' + h.x + ',' + h.y : '(no button)'}`);
     return;
   }
@@ -2389,7 +2393,7 @@ function xrToast(msg, ms) {
 App.sticks = store.get('sticks', false); App.menuHidden = store.get('menuHidden', false);
 function setSticks(on) { App.sticks = !!on; store.set('sticks', App.sticks); toast(App.sticks ? 'Thumbsticks on: right stick turns and resizes the table, left stick switches cars.' : 'Thumbsticks off.', 5000); }
 function setMenuHidden(hide) {
-  App.menuHidden = !!hide; store.set('menuHidden', App.menuHidden);
+  App.menuHidden = !!hide; store.set('menuHidden', App.menuHidden); window.KBTutEv && KBTutEv('menuToggle');
   if (!renderer.xr.isPresenting || (window.KBDrive && KBDrive.active)) return;
   uiMesh.visible = !App.menuHidden;
   if (!App.menuHidden) { const head = xrHead(), f = xrForward(); uiMesh.position.copy(head).addScaledVector(f, 0.85); uiMesh.position.y = head.y - 0.12; uiMesh.lookAt(head); drawXRPanel(); }
@@ -2450,6 +2454,7 @@ resetBtn.visible = false; resetBtn.renderOrder = 31; scene.add(resetBtn);
 let resetArmed = true, resetAt = 0;
 function resetView() {
   if (!renderer.xr.isPresenting) return;
+  window.KBTutEv && KBTutEv('reset');
   if (window.KBDrive && KBDrive.active) { if (KBDrive.recenter) KBDrive.recenter(); toast('View recentred.', 2500); return; }
   if (window.KBPoker && KBPoker.seat && KBPoker.seat() >= 0 && window.KBGarage && KBGarage.seated() >= 0) { KBPoker.placeHere(); return; } // at the poker table: your seat is where you are
   if (window.KBGarage && KBGarage.atPitwall && KBGarage.atPitwall()) { KBGarage.setAway(false); setTimeout(() => KBGarage.setAway(true), 120); toast('View reset.', 2500); return; } // step back onto the same spot
@@ -2708,6 +2713,7 @@ function frameBody(time, frame) {
   safeTick('weather', () => window.KBWeather && KBWeather.frame(dt));
   safeTick('headset', () => xrBodyTick(frame, dt));
   safeTick('drag', dragTick);
+  safeTick('tutorial', () => window.KBTut && KBTut.frame(dt));
   safeTick('debug', () => debugTick(dt));
   if (window.KBDrive && KBDrive.active) { KBDrive.frame(dt, frame); return; }
   if (App.source === 'replay') Replay.tick(dt);
@@ -2850,8 +2856,12 @@ window.KB = {
   CarGeo, darkMat, CAR_LEN, labelSprite, modelCarLen, Cars, Replay, Live, orbit, flatCamTick,
   Track, setTrack, cacheTrack, cachedTrack, sharedTrack, packTrack, outlineFromSession, relayInfo,
   layoutModel, rebuildModelTrack, positionPanels, xrHead, xrForward, enterXR, placementTick, placeAtReticle,
-  uiMesh, chaseMesh, controllers, applyTrackVis, showSource, setEnv, setLook, setGhostPost, rayFrom, raycaster, drawXRPanel, getSessions: () => sessions
+  pokerFromHeadset, inviteFromHeadset, uiMesh, chaseMesh, controllers, applyTrackVis, showSource, setEnv, setLook, setGhostPost, rayFrom, raycaster, drawXRPanel, getSessions: () => sessions
 };
+const TUT_VER = '1';
+(function loadTutorial() { // first-visit intro and the headset tour
+  const sc = document.createElement('script'); sc.src = 'tutorial.js?v=' + TUT_VER; sc.async = true; document.head.appendChild(sc);
+})();
 (function loadWeather() { // circuit weather: menu section, table sign, alerts
   const sc = document.createElement('script'); sc.src = 'forecast-panel.js?v=4'; sc.async = true; document.head.appendChild(sc);
 })();
@@ -2872,8 +2882,8 @@ document.querySelectorAll('#lookSeg button').forEach(b => b.onclick = () => setL
 $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
-const HANG_VER = '10';
-const POKER_VER = '11';
+const HANG_VER = '11';
+const POKER_VER = '12';
 let pokerLoading = null;
 window.KBLoadPoker = function loadPoker() { // poker and race bets, for people in a hangout
   if (window.KBPoker) return Promise.resolve();

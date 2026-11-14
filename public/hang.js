@@ -5,7 +5,7 @@
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const renderer = KB.renderer;
-const HANG_BUILD = 10;
+const HANG_BUILD = 11;
 const COLORS = ['#D2342B', '#F28A1E', '#E8C33A', '#2F8F4E', '#2BB5A0', '#2E6FD9', '#8E5BD6', '#E66BB0', '#C9CED3', '#F2F2EF'];
 
 const me = Object.assign({ name: '', color: COLORS[Math.floor(Math.random() * COLORS.length)], follow: true }, store.get('hang:me', {}));
@@ -398,6 +398,7 @@ function sendPose(frame) {
       if (pose) { const q = pose.transform.position; p[side === 'left' ? 'l' : 'r'] = toLocal(T, q); }
     }
   }
+  const k = window.KBPoker && KBPoker.trick && KBPoker.trick(); if (k) p.k = k; // a chip rolling over your knuckles
   send({ t: 'pose', p });
 }
 const tv = new THREE.Vector3(), tv2 = new THREE.Vector3();
@@ -470,6 +471,7 @@ function updateAvatars(dt) {
     a.head.position.copy(a.cur);
     a.head.rotation.set(Math.asin(Math.max(-0.9, Math.min(0.9, fLoc[1] || 0))) * 0.8, Math.atan2(-fx, -fz), 0, 'YXZ');
     poseBody(a, d, T, fx, fz, dt);
+    if (window.KBPoker && KBPoker.remoteTrick) for (const o of [a.L, a.R]) KBPoker.remoteTrick(o.glove, d && d.k && d.k.s === (o.side < 0 ? 'l' : 'r') ? d.k.d : 0, dt);
     // in the headset, a name tag never sits lower than 30 cm over your own eyes, so a friend's tag can't block your view
     a.label.position.set(a.cur.x, Math.max(a.cur.y + 0.3, myEyeY + 0.3), a.cur.z);
     const au = H.audio.get(p.id), lvl = au && !p.muted ? au.level() : 0;
