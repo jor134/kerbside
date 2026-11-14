@@ -123,7 +123,7 @@ Under Surroundings → Pit garage, choose **Casino** to dress the garage for a n
 - **Glowing seats:** in the casino, in the headset, each poker chair has a glowing ring. Point at one and click (or pinch): it starts a room with friends if you aren't in one, and sits you there.
 - **Starting from the headset:** **♠ Poker** on the headset menu starts a hangout if you aren't in one, opens the casino (if you're the host) and puts a panel at the poker table where you pick a seat. Cards are only dealt once two players are seated, so alone you'll see your chips but no cards.
 - **Headset:** when you sit down you're moved to your chair at the table.
-  - Pick up your cards (pinch, or grip button) to look at them; throw them into the middle to fold.
+  - Pick up your cards (pinch, or grip button) to look at them: one in each hand, or pinch the gap between them to lift both together, fanned. Throw them into the middle to fold.
   - Take chips from the three trays in front of you (100, 500 and 1,000) and drop them in the gold circle; knock on the felt (a quick tap, down and up) to bet or call what's in the circle. Knock with nothing in the circle to check.
   - The poker panel has the same buttons, for pointing and clicking. It sits **to your left**, out of the way of the table. **Panel: left / on hand / table** on its bottom row switches between beside you, floating over your left hand like a watch, and flat over the felt. **Reset panel** puts it back.
   - **Move any panel:** pinch (or pull the trigger) on the strip along the top of the poker panel, or the title strip of the main menu, and move your hand; let go to drop it. Pinching anywhere else still clicks.

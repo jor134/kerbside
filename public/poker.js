@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 10;
+const POKER_BUILD = 11;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -352,8 +352,9 @@ function update3D(frame) {
     const S = T3.seats[i], st = s && s.seats[i], mine = i === P.mySeat;
     const showCards = st && st.cards > 0;
     S.cards.forEach((c, k) => {
-      c.visible = !!showCards || c === held.obj;
-      if (!c.visible || c === held.obj) return;
+      const inHand = isHeld(c);
+      c.visible = !!showCards || inHand;
+      if (!c.visible || inHand) return;
       const code = st.shown ? st.shown[k] : mine && P.hole ? P.hole[k] : null;
       setCard(c, code, !!st.shown);
       c.position.copy(c.userData.home); c.rotation.copy(c.userData.homeRot);
@@ -534,20 +535,21 @@ function onSelect(e) { // trigger (or pinch) while pointing: action bar buttons,
     const h = ray.intersectObjects(T3.seats.map(s => s.plate), false)[0];
     if (h && h.object.userData.empty) { sit(h.object.userData.seat); return true; }
   }
-  if (held.obj || nearSomething) return true; // a pinch used to grab something isn't also a click
+  if (helds.size || nearSomething) return true; // a pinch used to grab something isn't also a click
   return false;
 }
 
 /* ---------------- Headset: hands and controllers ---------------- */
-// Grab with a pinch (hands) or the grip button (controllers). Your cards: lift them to look, let go over the
-// middle of the table to fold. Chips: take one from your trays and let go over the gold circle to add it to
+// Grab with a pinch (hands) or the grip button (controllers), with either hand or both at once. Your cards:
+// pinch one to lift it, or pinch between the two to lift both together, fanned; one in each hand works too.
+// Let go over the middle of the table to fold. Chips: take one from your trays and let go over the gold circle to add it to
 // your bet; take chips back out of the circle the same way. Knock on the felt to check (or to confirm the
 // chips in the circle as your bet or call).
-const held = { obj: null, src: null, kind: null, denom: 0 };
+const helds = new Map(); // inputSource -> { objs: [cards, or one chip], kind: 'card' | 'chip', denom }
+const isHeld = o => { for (const h of helds.values()) if (h.objs.includes(o)) return true; return false; };
 let nearSomething = false;
 const hands = new Map(); // inputSource -> { pos (anchor-local), grab, wasGrab, prevY, t }
 const hW = new THREE.Vector3(), hL = new THREE.Vector3();
-let heldChip = null;
 function buzz(v, ms) {
   const session = renderer.xr.getSession(); if (!session) return;
   for (const src of session.inputSources) { const a = src.gamepad && src.gamepad.hapticActuators && src.gamepad.hapticActuators[0]; if (a && a.pulse) try { a.pulse(v, ms); } catch (e) {} }
@@ -578,7 +580,7 @@ function handsFrame(dt, frame) {
   nearSomething = false;
   if (!T3 || !T3.g.visible || !renderer.xr.isPresenting || P.mySeat < 0) { dropHeld(true); return; }
   const S = T3.seats[P.mySeat], s = P.state, st = me(), o = opts();
-  const now = performance.now();
+  const now = performance.now(), seen = new Set();
   for (const h of readHands(frame)) {
     const local = T3.anchor.worldToLocal(hL.copy(h.pos));
     const st0 = hands.get(h.src) || { grab: false, prevY: local.y, t: now };
@@ -586,48 +588,65 @@ function handsFrame(dt, frame) {
     // near something you can pick up?
     const myCards = st && st.cards > 0 && !st.folded && P.hole;
     const near = (p, r) => Math.hypot(local.x - p.x, local.y - (p.y || 0), local.z - p.z) < r;
-    const cardNear = myCards ? S.cards.find(c => near(c.userData.home, 0.08)) : null;
+    const free = myCards ? S.cards.filter(c => !isHeld(c)) : [];
+    let cardNear = null, cd = 0.08;
+    for (const c of free) { const d = Math.hypot(local.x - c.userData.home.x, local.y - (c.userData.home.y || 0), local.z - c.userData.home.z); if (d < cd) { cd = d; cardNear = c; } }
+    // between your two cards (closer to the middle than to either card) picks up both
+    let bothNear = false;
+    if (free.length === 2) { const a = free[0].userData.home, b = free[1].userData.home, mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2, half = Math.hypot(a.x - b.x, a.z - b.z) / 2;
+      bothNear = Math.hypot(local.x - mx, local.z - mz) < Math.min(0.035, half * 0.6) && Math.abs(local.y - (a.y || 0)) < 0.08; }
     let trayNear = null, td = 0.06; // the closest tray within reach
     if (o) for (const t of S.trays) { const d = Math.hypot(local.x - t.position.x, local.y - t.position.y, local.z - t.position.z); if (d < td) { td = d; trayNear = t; } }
     const pendNear = o && P.pending > 0 && near(S.pendAt, 0.08);
-    if (cardNear || trayNear || pendNear) nearSomething = true;
+    if (cardNear || bothNear || trayNear || pendNear) nearSomething = true;
+    const mine = helds.get(h.src);
     // knock: a quick tap on the felt at your place, down and straight back up. Reaching down to pick
-    // something up doesn't count: that hand stays low, or pinches.
+    // something up doesn't count: that hand stays low, or pinches. The other hand can be holding your cards.
     const atMine = Math.hypot(local.x - S.cardAt.x, local.z - S.cardAt.z) < 0.32;
-    if (atMine && !h.grab && !held.obj && !nearSomething && st0.prevY > 0.03 && local.y <= 0.03 && vy < -0.5) st0.tap = now;
+    if (atMine && !h.grab && !mine && !(cardNear || bothNear || trayNear || pendNear) && st0.prevY > 0.03 && local.y <= 0.03 && vy < -0.5) st0.tap = now;
     if (st0.tap && (h.grab || now - st0.tap > 400)) st0.tap = 0;
     if (st0.tap && local.y > 0.05 && now - (P.lastKnock || 0) > 700) { st0.tap = 0; P.lastKnock = now; knock(); }
-    if (h.grab && !st0.grab && !held.obj) { // grab starts
-      if (cardNear) { held.obj = cardNear; held.kind = 'card'; held.src = h.src; buzz(0.4, 25); }
-      else if (trayNear) { held.kind = 'chip'; held.denom = trayNear.userData.denom; held.src = h.src; heldChip = heldChip || new THREE.Mesh(chipGeo, chipMat(100)); heldChip.material = chipMat(held.denom); T3.g.add(heldChip); held.obj = heldChip; buzz(0.3, 20); }
-      else if (pendNear) { const d = P.pendingChips.pop(); P.pending -= d; held.kind = 'chip'; held.denom = d; held.src = h.src; heldChip = heldChip || new THREE.Mesh(chipGeo, chipMat(d)); heldChip.material = chipMat(d); T3.g.add(heldChip); held.obj = heldChip; buzz(0.3, 20); }
+    if (h.grab && !st0.grab && !mine) { // grab starts
+      if (bothNear) { helds.set(h.src, { objs: free.slice().sort((x, y) => x.userData.k - y.userData.k), kind: 'card' }); buzz(0.5, 30); }
+      else if (cardNear) { helds.set(h.src, { objs: [cardNear], kind: 'card' }); buzz(0.4, 25); }
+      else if (trayNear) { const d = trayNear.userData.denom; helds.set(h.src, { objs: [chipFor(d)], kind: 'chip', denom: d }); buzz(0.3, 20); }
+      else if (pendNear) { const d = P.pendingChips.pop(); P.pending -= d; helds.set(h.src, { objs: [chipFor(d)], kind: 'chip', denom: d }); buzz(0.3, 20); }
     }
-    if (held.obj && held.src === h.src) {
-      if (h.grab) { // follow the hand; a card turns to face you
-        held.obj.position.copy(local);
-        if (held.kind === 'card') {
-          setCard(held.obj, P.hole[held.obj.userData.k], true);
-          held.obj.lookAt(vT.copy(KB.xrHead())); // turn the face towards your eyes
-        }
+    const H = helds.get(h.src);
+    if (H) {
+      if (h.grab) { // follow the hand; cards turn to face you, two of them fanned like a real hand
+        if (H.kind === 'card') {
+          const head = T3.anchor.worldToLocal(vT.copy(KB.xrHead())), n = H.objs.length;
+          const dx = local.x - head.x, dz = local.z - head.z, l = Math.hypot(dx, dz) || 1, rx = -dz / l, rz = dx / l;
+          H.objs.forEach((c, i) => {
+            const off = n === 2 ? (i - 0.5) * 0.034 : 0;
+            const toEye = n === 2 ? i * 0.0015 / l : 0; /* the second card a hair nearer your eyes, so they don't flicker */
+            c.position.set(local.x + rx * off - dx * toEye, local.y, local.z + rz * off - dz * toEye);
+            setCard(c, P.hole[c.userData.k], true);
+            c.lookAt(T3.anchor.localToWorld(vT.copy(head)));
+            if (n === 2) c.rotateZ((0.5 - i) * 0.22);
+          });
+        } else H.objs[0].position.copy(local);
       } else { // let go
         const centre = Math.hypot(local.x / KBGarage.pokerGeo.rx, local.z / KBGarage.pokerGeo.rz) < 0.42 && local.y < 0.3;
-        if (held.kind === 'card' && centre && o) { act('fold'); buzz(0.6, 40); }
-        else if (held.kind === 'card' && centre) toast('You can fold when it’s your turn.', 2500);
-        if (held.kind === 'chip' && near(S.pendAt, 0.12) && o) {
+        if (H.kind === 'card' && centre && o) { act('fold'); buzz(0.6, 40); }
+        else if (H.kind === 'card' && centre) toast('You can fold when it’s your turn.', 2500);
+        if (H.kind === 'chip' && near(S.pendAt, 0.12) && o) {
           const room = (st.stack || 0) - P.pending;
-          if (room > 0) { const d = Math.min(held.denom, room); P.pending += d; P.pendingChips.push(d); buzz(0.2, 15); }
+          if (room > 0) { const d = Math.min(H.denom, room); P.pending += d; P.pendingChips.push(d); buzz(0.2, 15); }
         }
-        dropHeld();
+        dropHeld(h.src);
       }
     }
     st0.grab = h.grab; st0.prevY = local.y; st0.t = now; hands.set(h.src, st0);
+    seen.add(h.src);
   }
-  if (held.obj && ![...hands.keys()].includes(held.src)) dropHeld();
+  for (const src of [...helds.keys()]) if (!seen.has(src)) dropHeld(src); // that hand went out of view
 }
-function dropHeld(silent) {
-  if (!held.obj) return;
-  if (held.kind === 'chip' && heldChip && heldChip.parent) heldChip.parent.remove(heldChip);
-  held.obj = null; held.src = null; held.kind = null;
+function chipFor(d) { const m = new THREE.Mesh(chipGeo, chipMat(d)); T3.g.add(m); return m; }
+function dropHeld(src) {
+  const drop = k => { const H = helds.get(k); if (!H) return; if (H.kind === 'chip') H.objs.forEach(m => m.parent && m.parent.remove(m)); helds.delete(k); };
+  if (src == null || src === true) [...helds.keys()].forEach(drop); else drop(src);
 }
 function knock() { // check, or confirm the chips in the circle as a call or a bet
   const o = opts(); if (!o) return;
@@ -673,5 +692,5 @@ const Race = {
 // For the glowing seats in the casino: who's in seat i, and sitting down from there.
 const ready = () => !!(P.state && P.gotMe);
 const seatName = i => { const st = P.state && P.state.seats[i]; return st ? st.name : null; };
-window.KBPoker = { onMsg, frame, onSelect, placeHere, openXR, barDrag, ready, seatName, sitAt: i => sit(i), wantBots: n => { P.wantBots = n; }, seat: () => P.mySeat, open: openUI, lookChanged, build: POKER_BUILD, race: Race, bal: () => P.bal, _P: P, _hand: handLabel, _T: () => T3, _held: () => ({ kind: held.kind, denom: held.denom, near: nearSomething, hands: [...hands.values()] }) };
+window.KBPoker = { onMsg, frame, onSelect, placeHere, openXR, barDrag, ready, seatName, sitAt: i => sit(i), wantBots: n => { P.wantBots = n; }, seat: () => P.mySeat, open: openUI, lookChanged, build: POKER_BUILD, race: Race, bal: () => P.bal, _P: P, _hand: handLabel, _T: () => T3, _held: () => ({ held: [...helds.values()].map(h => ({ kind: h.kind, denom: h.denom, n: h.objs.length })), near: nearSomething, hands: [...hands.values()] }) };
 })();
