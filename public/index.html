@@ -1012,7 +1012,7 @@ function setDrawTrack(on) {
 function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
 App.env = store.get('env', 'passthrough'); App.garageLook = store.get('garageLook', 'team'); App.ptWindow = store.get('ptWindow', false); App.ptSize = store.get('ptSize', 'M');
 let garageLoading = null;
-const GARAGE_VER = '16';
+const GARAGE_VER = '17';
 function loadGarage() {
   if (window.KBGarage) return Promise.resolve();
   return garageLoading || (garageLoading = new Promise((res, rej) => {
@@ -2054,7 +2054,8 @@ function drawXRPanel() {
   c.fillStyle = '#E9E6DF'; c.font = '700 44px "Barlow Condensed", sans-serif'; c.fillText('Kerbside', 32, 68);
   c.font = '500 24px Barlow, sans-serif'; c.fillStyle = '#94A1A8';
   const ml = App.buffering ? 'Loading positions…' : (App.modeLabel || App.statusText || '');
-  c.fillText(ml.length > 58 ? ml.slice(0, 57) + '…' : ml, 200, 64);
+  c.fillText(ml.length > 46 ? ml.slice(0, 45) + '…' : ml, 200, 64);
+  if (renderer.xr.isPresenting) { c.font = '600 20px "Barlow Condensed", sans-serif'; c.fillStyle = '#6E7A80'; c.textAlign = 'right'; c.fillText('⠿ pinch here to move', UIW - 28, 64); c.textAlign = 'left'; }
   if (App.flag.text) {
     c.font = '600 26px "Barlow Condensed", sans-serif'; const w = c.measureText(App.flag.text).width + 28;
     rr(c, UIW - 32 - w, 34, w, 40, 8); c.fillStyle = App.flag.color; c.fill();
@@ -2190,8 +2191,44 @@ const controllers = [0, 1].map(i => {
   const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]), new THREE.LineBasicMaterial({ color: 0xe9e6df }));
   line.scale.z = 2; c.add(line); c.userData.line = line;
   c.addEventListener('select', onSelect);
+  c.addEventListener('selectstart', dragStart); c.addEventListener('selectend', dragEnd);
   scene.add(c); return c;
 });
+/* Drag to move: pinch (or pull the trigger) on the menu's title strip, or the strip along the top of the
+   poker panel, and the panel follows your hand until you let go. Pinching anywhere else still clicks. */
+let drag = null;
+function dragTargets() {
+  const t = [];
+  if (uiMesh.visible) t.push({ mesh: uiMesh, handle: uv => (1 - uv.y) * UIH < 84, move: p => uiMesh.position.copy(p) });
+  const pb = window.KBPoker && KBPoker.barDrag && KBPoker.barDrag(); if (pb) t.push(pb);
+  return t;
+}
+function dragStart(e) {
+  if (!renderer.xr.isPresenting || (window.KBDrive && KBDrive.active)) return;
+  const c = e.target; rayFrom(c);
+  const ts = dragTargets(); if (!ts.length) return;
+  const hit = raycaster.intersectObjects(ts.map(t => t.mesh), false)[0]; if (!hit || !hit.uv) return;
+  const t = ts.find(x => x.mesh === hit.object); if (!t || !t.handle(hit.uv)) return;
+  const lp = hit.object.worldToLocal(hit.point.clone());
+  drag = { c, t, dist: hit.distance, grab: lp }; App.dragging = true; KBLog('drag: started');
+}
+function dragEnd(e) {
+  if (!drag || e.target !== drag.c) return;
+  drag = null; KBLog('drag: done');
+  setTimeout(() => { App.dragging = false; }, 60); /* the click that follows a drag mustn't teleport you */
+}
+const _dp = new THREE.Vector3(), _dq = new THREE.Vector3();
+function dragTick() {
+  if (!drag) return;
+  if (!renderer.xr.isPresenting) { drag = null; App.dragging = false; return; }
+  rayFrom(drag.c); const m = drag.t.mesh;
+  _dp.copy(raycaster.ray.origin).addScaledVector(raycaster.ray.direction, drag.dist);
+  m.lookAt(xrHead()); m.updateMatrixWorld();
+  _dq.copy(drag.grab).applyQuaternion(m.getWorldQuaternion(new THREE.Quaternion())).multiply(m.getWorldScale(new THREE.Vector3()));
+  _dp.sub(_dq); /* keep the spot you grabbed under your pointer */
+  if (m.parent && m.parent !== scene) { drag.t.move(_dp); } else { m.position.copy(_dp); }
+  m.lookAt(xrHead());
+}
 const raycaster = new THREE.Raycaster(), tmpM = new THREE.Matrix4();
 function rayFrom(c) { tmpM.identity().extractRotation(c.matrixWorld); raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld); raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tmpM); }
 function onSelect(e) {
@@ -2670,6 +2707,7 @@ function frameBody(time, frame) {
   safeTick('poker', () => window.KBPoker && KBPoker.frame(dt, frame));
   safeTick('weather', () => window.KBWeather && KBWeather.frame(dt));
   safeTick('headset', () => xrBodyTick(frame, dt));
+  safeTick('drag', dragTick);
   safeTick('debug', () => debugTick(dt));
   if (window.KBDrive && KBDrive.active) { KBDrive.frame(dt, frame); return; }
   if (App.source === 'replay') Replay.tick(dt);
@@ -2835,7 +2873,7 @@ $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
 const HANG_VER = '9';
-const POKER_VER = '9';
+const POKER_VER = '10';
 let pokerLoading = null;
 window.KBLoadPoker = function loadPoker() { // poker and race bets, for people in a hangout
   if (window.KBPoker) return Promise.resolve();

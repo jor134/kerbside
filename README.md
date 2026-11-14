@@ -125,7 +125,9 @@ Under Surroundings → Pit garage, choose **Casino** to dress the garage for a n
 - **Headset:** when you sit down you're moved to your chair at the table.
   - Pick up your cards (pinch, or grip button) to look at them; throw them into the middle to fold.
   - Take chips from the three trays in front of you (100, 500 and 1,000) and drop them in the gold circle; knock on the felt (a quick tap, down and up) to bet or call what's in the circle. Knock with nothing in the circle to check.
-  - The action bar over the felt has the same buttons, for pointing and clicking.
+  - The poker panel has the same buttons, for pointing and clicking. It sits **to your left**, out of the way of the table. **Panel: left / on hand / table** on its bottom row switches between beside you, floating over your left hand like a watch, and flat over the felt. **Reset panel** puts it back.
+  - **Move any panel:** pinch (or pull the trigger) on the strip along the top of the poker panel, or the title strip of the main menu, and move your hand; let go to drop it. Pinching anywhere else still clicks.
+  - **Seat height:** the first time you sit in the headset, your seat is fitted so your eyes are about 48 cm above the felt. **▼ Lower**, **Fit** and **▲ Higher** on the poker panel change it in 5 cm steps; the headset remembers it.
   - **Place here** on the action bar: stand or sit where you want your seat to be in your real room (a real chair works well), face the way you want to face the table, and press it. The table is re-placed around you.
 
 **Race bets** are pool bets on the race: everything staked is shared by whoever picked the winner, in proportion to their stake, and if nobody picked it everyone gets their stake back. The host opens them (**Next to pit**, **Leader in 3 laps**, **Safety car in the next 10 laps?**); betting stays open for a minute. The host's app settles them from the race on the host's screen, at the host's broadcast delay, so pick a host who's watching. The host can also call a bet off.

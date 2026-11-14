@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 9;
+const POKER_BUILD = 10;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -61,7 +61,10 @@ const botsAtTable = () => (P.state ? P.state.seats.filter(s => s && /^bot-/.test
 const addBots = n => send({ t: 'pk', a: 'bots', n });
 const removeBots = () => send({ t: 'pk', a: 'bots', n: 0 });
 function practice() { if (P.mySeat >= 0) addBots(3); else { P.wantBots = 3; const s = P.state; const free = s ? s.seats.findIndex(x => !x) : 0; sit(free < 0 ? 0 : free); } }
-function seatedNow() { if (P.mySeat >= 0 && P.wantBots) { const n = P.wantBots; P.wantBots = 0; addBots(n); toast('Bots joined the table: a hand starts in a few seconds.', 4000); } }
+function seatedNow() {
+  resetBar();
+  // first time at the table in the headset: fit the seat height once you've settled in (later visits keep yours)
+  if (P.mySeat >= 0 && renderer.xr.isPresenting && window.KBGarage && KBGarage.lift && KBGarage.lift() == null) setTimeout(() => { if (P.mySeat >= 0 && KBGarage.lift() == null) { KBGarage.fitHeight(); toast('Seat height fitted. Lower, Fit and Higher on the panel change it.', 5000); } }, 1500); if (P.mySeat >= 0 && P.wantBots) { const n = P.wantBots; P.wantBots = 0; addBots(n); toast('Bots joined the table: a hand starts in a few seconds.', 4000); } }
 function myTurn() {
   if (renderer.xr.isPresenting) buzz(0.5, 60); else if (!P.open) toast('♠ Your turn at the poker table.', 3000);
 }
@@ -73,7 +76,7 @@ function placeMe() { // in the casino garage, sitting down moves you to your cha
 function lookChanged() { placeMe(); P.dirty = true; }
 // Place here: stand (or sit) where you want your seat to be in your real room, facing the way you want
 // to face the table, and press it. The table is re-placed around you.
-function placeHere() { if (P.mySeat >= 0 && window.KBGarage) { KBGarage.seatAt(P.mySeat, true); buzz(0.4, 30); toast('Your seat is where you are now.', 2500); } }
+function placeHere() { if (P.mySeat >= 0 && window.KBGarage) { KBGarage.seatAt(P.mySeat, true); resetBar(); buzz(0.4, 30); toast('Your seat is where you are now.', 2500); } }
 
 /* ---------------- Actions ---------------- */
 const act = (a, amount) => send({ t: 'pk', a: 'act', act: a, amount });
@@ -329,14 +332,15 @@ function build3D(anchor) {
   const potPlate = plate(320, 72); potPlate.position.set(0, 0.16, 0.1); potPlate.scale.set(0.3, 0.068, 1); g.add(potPlate);
   const btn = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.008, 20), KBMat({ color: 0xffffff }, 'plastic')); g.add(btn);
   // the action bar floats over the felt in front of you (headset)
-  const bar = { cv: document.createElement('canvas') }; bar.cv.width = 1024; bar.cv.height = 400; bar.tex = new THREE.CanvasTexture(bar.cv);
-  bar.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.242), new THREE.MeshBasicMaterial({ map: bar.tex, transparent: true, side: THREE.DoubleSide }));
+  const bar = { cv: document.createElement('canvas') }; bar.cv.width = 1024; bar.cv.height = BAR_H; bar.tex = new THREE.CanvasTexture(bar.cv);
+  bar.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.62 * BAR_H / 1024), new THREE.MeshBasicMaterial({ map: bar.tex, transparent: true, side: THREE.DoubleSide }));
   bar.mesh.visible = false; g.add(bar.mesh); bar.hits = [];
   g.traverse(o => { if (o.material && KBGarage.stencil) [].concat(o.material).forEach(m => { if (!m.isSpriteMaterial) KBGarage.stencil(m); }); });
   return { g, seats, board, pot, potPlate, btn, bar, anchor };
 }
 const vT = new THREE.Vector3();
-function update3D() {
+const BAR_HANDLE = 40, BAR_H = 520; // the bar's canvas: drag strip, then the buttons
+function update3D(frame) {
   const anchor = window.KBGarage && KBGarage.pokerAnchor && KBGarage.pokerAnchor();
   const show = !!anchor && App.env === 'garage' && App.garageLook === 'casino' && window.KBHang && KBHang.active();
   if (show !== P.wasShown && window.KBLog) { KBLog(`poker table ${show ? 'shown' : 'hidden'} (garage ${!!anchor}, place ${App.env}/${App.garageLook}, in a room ${!!(window.KBHang && KBHang.active())})`); P.wasShown = show; }
@@ -382,28 +386,77 @@ function update3D() {
     });
     if (s.button >= 0) { T3.btn.visible = true; T3.btn.position.copy(T3.seats[s.button].btnAt); T3.btn.position.y = 0.004; } else T3.btn.visible = false;
   }
-  updateBar();
+  updateBar(frame);
 }
 
 /* ---------------- Headset: action bar ---------------- */
-function updateBar() {
+// Where the bar sits while you're seated: 'left' (beside you, to your left, out of the way of the table),
+// 'hand' (floats over your left hand, like a watch) or 'table' (flat over the felt in front of you).
+// Pinching the strip along its top and moving your hand drags it anywhere; it stays there for this seat.
+const BAR_MODES = ['left', 'hand', 'table'], BAR_LABEL = { left: 'Panel: left', hand: 'Panel: on hand', table: 'Panel: table' };
+P.barMode = (() => { try { const m = localStorage.getItem('kerbside:pokerBar'); return BAR_MODES.includes(m) ? m : 'left'; } catch (e) { return 'left'; } })();
+function setBarMode(m) { P.barMode = m; P.barMoved = null; P.barLeft = null; P.barLeftAt = performance.now() + 300; try { localStorage.setItem('kerbside:pokerBar', m); } catch (e) {} }
+function resetBar() { P.barMoved = null; P.barLeft = null; P.barLeftAt = performance.now() + 900; }
+const vH = new THREE.Vector3(), vS = new THREE.Vector3(), qH = new THREE.Quaternion(), UP = new THREE.Vector3(0, 1, 0);
+function leftHandWorld(frame) { // a point 12 cm above the back of your left hand (or controller)
+  const session = renderer.xr.getSession(), ref = renderer.xr.getReferenceSpace(); if (!session || !ref || !frame) return null;
+  for (const src of session.inputSources) {
+    if (src.handedness !== 'left') continue;
+    let pose = null;
+    if (src.hand && frame.getJointPose) { const w = src.hand.get('wrist'); pose = w && frame.getJointPose(w, ref); }
+    else if (src.gripSpace) pose = frame.getPose(src.gripSpace, ref);
+    if (!pose) return null;
+    const p = pose.transform.position; return vH.set(p.x, p.y + 0.14, p.z);
+  }
+  return null;
+}
+function placeBar(bar, frame) {
+  const head = KB.xrHead(), g = T3.g;
+  bar.mesh.scale.setScalar(1);
+  if (P.barMoved) { bar.mesh.position.copy(P.barMoved); bar.mesh.lookAt(head); return; }
+  if (P.barMode === 'hand') {
+    const w = leftHandWorld(frame);
+    if (w) { bar.mesh.position.copy(g.worldToLocal(w.clone())); bar.mesh.scale.setScalar(0.6); bar.mesh.lookAt(head); return; }
+  }
+  const S = T3.seats[P.mySeat];
+  if (P.barMode === 'table') {
+    bar.mesh.position.copy(S.dir).multiplyScalar(0.62 * KBGarage.pokerGeo.rx); bar.mesh.position.y = 0.2;
+    bar.mesh.rotation.set(-0.5, S.yaw + Math.PI, 0, 'YXZ'); return;
+  }
+  // left: worked out once you've settled into the seat, then left alone so it doesn't swim with your head
+  const lf = KBGarage.lift ? KBGarage.lift() : 0; if (P.barLift !== lf) { P.barLift = lf; P.barLeft = null; P.barLeftAt = Math.max(P.barLeftAt || 0, performance.now() + 500); } /* height changed: re-place beside you */
+  if (!P.barLeft && performance.now() > (P.barLeftAt || 0)) {
+    const hl = g.worldToLocal(head.clone()), f = S.dir.clone().multiplyScalar(-1), left = vS.set(f.z, 0, -f.x).normalize();
+    P.barLeft = hl.clone().addScaledVector(f, 0.3).addScaledVector(left, 0.42); P.barLeft.y = hl.y - 0.12;
+  }
+  if (P.barLeft) bar.mesh.position.copy(P.barLeft); else { bar.mesh.position.copy(S.dir).multiplyScalar(1.2); bar.mesh.position.y = 0.5; }
+  bar.mesh.lookAt(head);
+}
+// For the page's drag-to-move: the bar and which part of it is the handle.
+function barDrag() {
+  if (!T3 || !T3.bar.mesh.visible) return null;
+  return { mesh: T3.bar.mesh, handle: uv => (1 - uv.y) * BAR_H < BAR_HANDLE, move: p => { P.barMoved = T3.g.worldToLocal(p.clone()); } };
+}
+function updateBar(frame) {
   const bar = T3.bar, xr = renderer.xr.isPresenting, mine = P.mySeat >= 0;
   bar.mesh.visible = xr && (mine || P.xrOpen);
   if (!bar.mesh.visible) return;
-  if (mine) {
-    const S = T3.seats[P.mySeat];
-    bar.mesh.position.copy(S.dir).multiplyScalar(0.62 * KBGarage.pokerGeo.rx); bar.mesh.position.y = 0.2;
-    bar.mesh.rotation.set(-0.5, S.yaw + Math.PI, 0, 'YXZ');
-  } else { // not seated yet: stand the panel up at the edge of the table nearest you, facing you
+  if (mine) placeBar(bar, frame);
+  else if (P.barMoved) { bar.mesh.position.copy(P.barMoved); bar.mesh.lookAt(KB.xrHead()); }
+  else { // not seated yet: stand the panel up at the edge of the table nearest you, facing you
     const L = T3.anchor.worldToLocal(vT.copy(KB.xrHead())); let dx = L.x, dz = L.z; const n = Math.hypot(dx, dz) || 1; dx /= n; dz /= n;
     bar.mesh.position.set(dx * (KBGarage.pokerGeo.rx + 0.05), 0.42, dz * (KBGarage.pokerGeo.rz + 0.05));
     bar.mesh.rotation.set(-0.25, Math.atan2(-dx, -dz) + Math.PI, 0, 'YXZ');
   }
   const o = opts(), s = P.state, st = me(), now = Date.now();
-  const sig = JSON.stringify([P.mySeat, s && s.seats.map(x => x && [x.name, x.stack]), P.xrTab, o, P.pending, P.raiseTo, st && st.sitOut, s && s.toAct, s && Math.round((s.deadline - now) / 1000), P.bets.map(m => [m.id, m.status, m.pool, Math.round((m.closes - now) / 1000)]), P.betPick, P.betAmt, P.hover, P.bal]);
+  const sig = JSON.stringify([P.barMode, KBGarage.lift && KBGarage.lift(), P.mySeat, s && s.seats.map(x => x && [x.name, x.stack]), P.xrTab, o, P.pending, P.raiseTo, st && st.sitOut, s && s.toAct, s && Math.round((s.deadline - now) / 1000), P.bets.map(m => [m.id, m.status, m.pool, Math.round((m.closes - now) / 1000)]), P.betPick, P.betAmt, P.hover, P.bal]);
   if (sig === bar.sig) return; bar.sig = sig;
-  const c = bar.cv.getContext('2d'), W = 1024, H = 400, hits = bar.hits = [];
-  c.clearRect(0, 0, W, H); KB.rr(c, 4, 4, W - 8, H - 8, 22); c.fillStyle = 'rgba(24,14,18,.92)'; c.fill(); c.strokeStyle = '#6b2b3a'; c.lineWidth = 4; c.stroke();
+  const c = bar.cv.getContext('2d'), W = 1024, H = BAR_H - BAR_HANDLE, hits = bar.hits = [];
+  c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, W, BAR_H);
+  // the drag handle along the top
+  KB.rr(c, 300, 6, 424, 26, 13); c.fillStyle = 'rgba(24,14,18,.85)'; c.fill();
+  c.fillStyle = '#c9a13b'; c.font = '600 20px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('⠿  pinch here and move to drag  ⠿', 512, 20); c.textAlign = 'left'; c.textBaseline = 'alphabetic';
+  c.translate(0, BAR_HANDLE); KB.rr(c, 4, 4, W - 8, H - 8, 22); c.fillStyle = 'rgba(24,14,18,.92)'; c.fill(); c.strokeStyle = '#6b2b3a'; c.lineWidth = 4; c.stroke();
   const btn = (x, y, w, h, label, fn, kind) => {
     const hov = P.hover && P.hover.x >= x && P.hover.x <= x + w && P.hover.y >= y && P.hover.y <= y + h;
     KB.rr(c, x, y, w, h, 12); c.fillStyle = kind === 'go' ? '#c9a13b' : kind === 'no' ? '#4a1420' : kind === 'off' ? '#1c1418' : '#2a1b20'; c.fill();
@@ -444,6 +497,12 @@ function updateBar() {
     btn(24, 300, 220, 70, st && st.sitOut ? 'I’m back' : 'Sit out', () => send({ t: 'pk', a: 'sitout', on: !(st && st.sitOut) }));
     btn(256, 300, 220, 70, 'Leave table', () => send({ t: 'pk', a: 'stand' }));
     btn(488, 300, 220, 70, 'Place here', placeHere);
+    const G = window.KBGarage;
+    c.font = '600 26px "Barlow Condensed", sans-serif'; c.fillStyle = '#94A1A8'; c.fillText('Height', 28, 418); c.fillText(((G.lift() || 0) >= 0 ? '+' : '') + Math.round((G.lift() || 0) * 100) + ' cm', 28, 446);
+    btn(150, 392, 120, 66, '▼ Lower', () => { G.setLift((G.lift() || 0) - 0.05); }); btn(282, 392, 130, 66, 'Fit', () => { G.fitHeight(); });
+    btn(424, 392, 120, 66, '▲ Higher', () => { G.setLift((G.lift() || 0) + 0.05); });
+    btn(568, 392, 230, 66, BAR_LABEL[P.barMode], () => setBarMode(BAR_MODES[(BAR_MODES.indexOf(P.barMode) + 1) % BAR_MODES.length]));
+    btn(810, 392, 190, 66, 'Reset panel', resetBar);
     if (st && st.stack < 100) btn(720, 300, 220, 70, 'Top up', () => send({ t: 'pk', a: 'topup' }), 'go');
     else if (botsAtTable()) btn(720, 300, 220, 70, 'Remove bots', removeBots);
     else btn(720, 300, 220, 70, 'Add bots', () => addBots(3), s && s.seats.every(Boolean) ? 'off' : '');
@@ -464,7 +523,7 @@ function updateBar() {
 function barHit(ray) {
   if (!T3 || !T3.bar.mesh.visible) return null;
   const h = ray.intersectObject(T3.bar.mesh, false)[0]; if (!h || !h.uv) return null;
-  return { x: h.uv.x * 1024, y: (1 - h.uv.y) * 400 };
+  return { x: h.uv.x * 1024, y: (1 - h.uv.y) * BAR_H - BAR_HANDLE };
 }
 function onSelect(e) { // trigger (or pinch) while pointing: action bar buttons, and empty seats to sit down
   if (!T3 || !T3.g.visible) return false;
@@ -589,7 +648,7 @@ function frame(dt, xrFrame) {
   if (!active) { if (wasActive) { P.state = null; P.mySeat = -1; P.hole = null; placeMe(); if (el) el.hidden = true; } wasActive = false; if (T3) T3.g.visible = false; return; }
   if (!wasActive) { wasActive = true; send({ t: 'pk', a: 'state' }); }
   if (P.state) hostSettle();
-  update3D();
+  update3D(xrFrame);
   if (renderer.xr.isPresenting && T3 && T3.bar.mesh.visible) { // hover highlight on the action bar
     let hp = null; for (const c of KB.controllers) { KB.rayFrom(c); const p = barHit(KB.raycaster); if (p) hp = p; }
     const k = hp ? T3.bar.hits.findIndex(b => hp.x >= b.x && hp.x <= b.x + b.w && hp.y >= b.y && hp.y <= b.y + b.h) : -1;
@@ -614,5 +673,5 @@ const Race = {
 // For the glowing seats in the casino: who's in seat i, and sitting down from there.
 const ready = () => !!(P.state && P.gotMe);
 const seatName = i => { const st = P.state && P.state.seats[i]; return st ? st.name : null; };
-window.KBPoker = { onMsg, frame, onSelect, placeHere, openXR, ready, seatName, sitAt: i => sit(i), wantBots: n => { P.wantBots = n; }, seat: () => P.mySeat, open: openUI, lookChanged, build: POKER_BUILD, race: Race, bal: () => P.bal, _P: P, _hand: handLabel, _T: () => T3, _held: () => ({ kind: held.kind, denom: held.denom, near: nearSomething, hands: [...hands.values()] }) };
+window.KBPoker = { onMsg, frame, onSelect, placeHere, openXR, barDrag, ready, seatName, sitAt: i => sit(i), wantBots: n => { P.wantBots = n; }, seat: () => P.mySeat, open: openUI, lookChanged, build: POKER_BUILD, race: Race, bal: () => P.bal, _P: P, _hand: handLabel, _T: () => T3, _held: () => ({ kind: held.kind, denom: held.denom, near: nearSomething, hands: [...hands.values()] }) };
 })();

@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 16;
+const GARAGE_BUILD = 17;
 
 /* ---------------- Materials ---------------- */
 const toon = (c, gloss) => KBMat({ color: c }, gloss);
@@ -520,7 +520,14 @@ function updateTraffic(dt) {
 // hangout see you standing on the pitwall too. On a flat screen the camera moves there instead.
 // spot: null (at the circuit table), or where to stand: { pos: local feet position, yaw: local facing (or
 // null to keep the way you're facing), eye: flat-screen eye height, seat: poker seat number }
-let spot = null, OFF = null, BASE = null, offFor = null, settle = 0;
+let spot = null, OFF = null, BASE = null, offFor = null, settle = 0, offLift = 0;
+// Seat height: how far the poker table's room is lowered under you (a positive lift puts your eyes higher
+// above the table). Saved on this device, so the headset remembers how you like to sit.
+let lift = (() => { try { const v = parseFloat(localStorage.getItem('kerbside:pokerLift')); return Number.isFinite(v) ? v : null; } catch (e) { return null; } })();
+const liftFor = want => (want && want.seat != null ? lift || 0 : 0);
+function setLift(v) { lift = Math.max(-0.6, Math.min(1.2, v)); try { localStorage.setItem('kerbside:pokerLift', String(lift)); } catch (e) {} }
+// Fit: eyes 48 cm above the felt, about where they'd be sitting at a real card table.
+function fitHeight() { const real = KB.xrHead().y - (OFF ? standW.y + offLift : 0); setLift(POKER.top + 0.48 - real); }
 (function patchPoses() {
   if (typeof XRFrame === 'undefined') return;
   const P = XRFrame.prototype, swap = s => (OFF && s === BASE ? OFF : s);
@@ -536,7 +543,7 @@ function syncTeleport(show) {
   // Moving from one spot to another: drop the old offset first, then wait two frames before measuring
   // where your head is. Until the headset has drawn a frame without the offset, the head position we
   // read is still the shifted one, and measuring from it would land you somewhere else entirely.
-  if (OFF && offFor !== want) { OFF = null; BASE = null; offFor = null; settle = 2; if (!want) setTimeout(() => KB.positionPanels(), 150); return; }
+  if (OFF && (offFor !== want || offLift !== liftFor(want))) { OFF = null; BASE = null; offFor = null; settle = 2; if (!want) setTimeout(() => KB.positionPanels(), 150); return; }
   if (settle > 0) { settle--; return; }
   if (want && !OFF) {
     const ref = renderer.xr.getReferenceSpace(); if (!ref || typeof XRRigidTransform === 'undefined') return;
@@ -545,8 +552,8 @@ function syncTeleport(show) {
     const th = want.yaw == null ? 0 : yawOf(KB.xrForward()) - (want.yaw + built.G.rotation.y);
     const c = Math.cos(th), s = Math.sin(th);
     const rx = standW.x * c + standW.z * s, rz = -standW.x * s + standW.z * c;
-    BASE = ref; offFor = want;
-    OFF = ref.getOffsetReferenceSpace(new XRRigidTransform({ x: head.x - rx, y: -standW.y, z: head.z - rz }, { x: 0, y: Math.sin(th / 2), z: 0, w: Math.cos(th / 2) }));
+    BASE = ref; offFor = want; offLift = liftFor(want);
+    OFF = ref.getOffsetReferenceSpace(new XRRigidTransform({ x: head.x - rx, y: -standW.y - offLift, z: head.z - rz }, { x: 0, y: Math.sin(th / 2), z: 0, w: Math.cos(th / 2) }));
     setTimeout(() => KB.positionPanels(), 150);
   }
 }
@@ -564,7 +571,7 @@ const tpDot = new THREE.Mesh(new THREE.CircleGeometry(0.06, 20), tpMark.material
 const tpV = new THREE.Vector3();
 function canTeleport() {
   return !!built && built.G.visible && App.env === 'garage' && renderer.xr.isPresenting && !App.placing && !App.placingWindow
-    && !(window.KBDrive && KBDrive.active) && !(spot && spot.seat != null);
+    && !(window.KBDrive && KBDrive.active) && !(spot && spot.seat != null) && !App.dragging;
 }
 function onMenu(c) { KB.rayFrom(c); return KB.raycaster.intersectObjects([KB.uiMesh, KB.chaseMesh].filter(m => m && m.visible), false).length > 0; }
 function allowedFloor(x, z) {
@@ -716,6 +723,6 @@ function sessionEnded() { win.placed = false; frozenYaw = null; lastAnchor.set(1
 window.KBGarage = { frame, startWindowPlacing, confirmWindow, canWindow, sessionEnded, setTeamColor, setAway, away, atPitwall, flatCam, lookBy, zoomBy, build: GARAGE_BUILD,
   setLook, look: () => look_, seatAt, seated: () => spot && spot.seat != null ? spot.seat : -1,
   pokerAnchor: () => built && built.casino.anchor, pokerGeo: POKER, seatSpot, stencil: outsideWindow,
-  roaming: () => !!(spot && spot.free && App.env === 'garage'), pickSeat, hoverSeat: () => (seatsShown() ? hoverSeat : -1),
+  roaming: () => !!(spot && spot.free && App.env === 'garage'), pickSeat, setLift, lift: () => lift, fitHeight, hoverSeat: () => (seatsShown() ? hoverSeat : -1),
   _dbg: () => ({ TR, built, SCR, OFF, look, spot, tp, tpMark }) };
 })();
