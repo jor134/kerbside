@@ -283,6 +283,7 @@ if (!store.get('defaultsV2', false)) {
 if (!store.get('defaultsV3', false)) { store.set('scenery', true); store.set('defaultsV3', true); }
 let toastTimer;
 function toast(msg, ms = 4500) {
+  try { KBLog('message: ' + String(msg).slice(0, 110)); } catch (e) {}
   try { xrToast(msg, ms); } catch (e) {} // inside the headset the page's toast can't be seen
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms);
@@ -1011,7 +1012,7 @@ function setDrawTrack(on) {
 function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
 App.env = store.get('env', 'passthrough'); App.garageLook = store.get('garageLook', 'team'); App.ptWindow = store.get('ptWindow', false); App.ptSize = store.get('ptSize', 'M');
 let garageLoading = null;
-const GARAGE_VER = '14';
+const GARAGE_VER = '15';
 function loadGarage() {
   if (window.KBGarage) return Promise.resolve();
   return garageLoading || (garageLoading = new Promise((res, rej) => {
@@ -2159,6 +2160,7 @@ function drawXRPanel() {
   const y8 = 1184;
   btn(32, y8, 300, App.xrPage === 'races' ? 'Back to timing' : 'Load a race', App.xrPage === 'races', () => { App.xrPage = App.xrPage === 'races' ? 'main' : 'races'; if (App.xrPage === 'races' && !sessions.length) loadSessionList(App.xrYear || new Date().getFullYear()).then(() => { App.uiDirty = true; }); });
   btn(342, y8, 250, App.source === 'live' ? 'Live: on' : 'Go live', App.source === 'live', () => { App.xrPage = 'main'; showSource('live'); Live.connect(); });
+  btn(792, y8, 200, App.debug ? 'Debug: on' : 'Debug info', !!App.debug, () => { App.debug = !App.debug; App.debugDirty = true; });
   if (App.xrPage === 'races') { // the session picker, in place of the timing board
     App.xrYear = App.xrYear || new Date().getFullYear();
     let yx = 32; for (let yr = new Date().getFullYear(); yr >= 2023; yr--) { const v = yr; btn(yx, 84, 120, String(yr), App.xrYear === yr, () => { App.xrYear = v; App.xrPageN = 0; sessions = []; $('#year').value = v; loadSessionList(v).then(() => { App.uiDirty = true; }); }); yx += 130; }
@@ -2193,12 +2195,17 @@ const controllers = [0, 1].map(i => {
 const raycaster = new THREE.Raycaster(), tmpM = new THREE.Matrix4();
 function rayFrom(c) { tmpM.identity().extractRotation(c.matrixWorld); raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld); raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tmpM); }
 function onSelect(e) {
-  if (wristClick(e)) return;
+  const hand = e && e.target ? KB.controllers.indexOf(e.target) : -1;
+  // A glowing casino seat that's lit up ("Click to sit") wins over everything: use the seat that's
+  // highlighted, whichever hand's pointer lit it, rather than re-aiming with the hand that clicked.
+  const hv = window.KBGarage && KBGarage.hoverSeat ? KBGarage.hoverSeat() : -1;
+  if (hv >= 0) { KBLog(`click (hand ${hand}): seat ${hv}`); pokerSeatFromHeadset(hv); return; }
+  if (wristClick(e)) { KBLog(`click (hand ${hand}): wrist button`); return; }
   if (!(window.KBPoker && KBPoker.ready && KBPoker._T && KBPoker._T() && KBPoker._T().bar.mesh.visible) && window.KBGarage && KBGarage.pickSeat) { // a glowing seat in the casino
-    const i = KBGarage.pickSeat(e.target); if (i >= 0) { pokerSeatFromHeadset(i); return; } if (i === -2) return;
+    const i = KBGarage.pickSeat(e.target); if (i >= 0) { KBLog(`click (hand ${hand}): seat ${i} (aimed)`); pokerSeatFromHeadset(i); return; } if (i === -2) { KBLog('click: seat taken'); return; }
   }
-  if (window.KBHang && KBHang.onSelect(e)) return;
-  if (window.KBPoker && KBPoker.onSelect(e)) return;
+  if (window.KBHang && KBHang.onSelect(e)) { KBLog(`click (hand ${hand}): hangout panel`); return; }
+  if (window.KBPoker && KBPoker.onSelect(e)) { KBLog(`click (hand ${hand}): poker panel or table`); return; }
   if (window.KBDrive && KBDrive.active) { KBDrive.onSelect(e); return; }
   const c = e.target; rayFrom(c);
   const hit = raycaster.intersectObjects([uiMesh, chaseMesh, chaseLabel].filter(m => m.visible && (m !== chaseLabel || chaseMesh.visible)), false)[0];
@@ -2206,10 +2213,12 @@ function onSelect(e) {
     const px = hit.uv.x * UIW, py = (1 - hit.uv.y) * UIH;
     const h = (App.uiHits || []).find(b => px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h);
     if (h) { h.fn(); App.uiDirty = true; }
+    KBLog(`click (hand ${hand}): menu ${h ? 'button at ' + h.x + ',' + h.y : '(no button)'}`);
     return;
   }
   if (hit && (hit.object === chaseMesh || hit.object === chaseLabel) && hit.uv) { cycleChase(hit.uv.x < 0.5 ? -1 : 1); return; }
   if (hit) return;
+  KBLog(`click (hand ${hand}): nothing under the pointer`);
   if (App.placingWindow && window.KBGarage) { KBGarage.confirmWindow(); App.uiDirty = true; drawXRPanel(); return; }
   if (App.placing && App.view !== 'trackside') placeAtReticle();
 }
@@ -2255,6 +2264,60 @@ const xtTex = new THREE.CanvasTexture(xtCv);
 const xtMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.56 * 200 / 1024), new THREE.MeshBasicMaterial({ map: xtTex, transparent: true, depthTest: false }));
 xtMesh.visible = false; xtMesh.renderOrder = 30; scene.add(xtMesh);
 let xtUntil = 0, xtFresh = false;
+/* ================= Debug info ================= */
+// A running log of what the app did (clicks, connections, poker), plus a live summary, shown on a panel
+// beside the headset menu (Debug button) so a screenshot from the headset tells me what went wrong.
+const kbLog = [];
+window.KBLog = (msg) => { const t = new Date(); kbLog.push(`${t.toTimeString().slice(0, 8)} ${msg}`); if (kbLog.length > 26) kbLog.shift(); if (App.debug) App.debugDirty = true; };
+window.addEventListener('error', e => KBLog('ERROR ' + (e.message || e)));
+window.addEventListener('unhandledrejection', e => KBLog('ERROR (async) ' + ((e.reason && e.reason.message) || e.reason)));
+const dbgCv = document.createElement('canvas'); dbgCv.width = 1024; dbgCv.height = 1100;
+const dbgTex = new THREE.CanvasTexture(dbgCv);
+const dbgMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.62 * 1100 / 1024), new THREE.MeshBasicMaterial({ map: dbgTex, transparent: true, depthTest: false }));
+dbgMesh.visible = false; dbgMesh.renderOrder = 29; scene.add(dbgMesh);
+const v3s = v => v ? `${v.x.toFixed(2)}, ${v.y.toFixed(2)}, ${v.z.toFixed(2)}` : '-';
+function debugLines() {
+  const L = [], H = window.KBHang && KBHang._H, P = window.KBPoker && KBPoker._P, T = window.KBPoker && KBPoker._T && KBPoker._T(), G = window.KBGarage;
+  L.push(`Builds: garage ${G ? G.build : '-'} · poker ${window.KBPoker ? KBPoker.build : '-'} · hangout ${window.KBHang ? KBHang.hangBuild : '-'} · headset ${renderer.xr.isPresenting ? App.xrMode : 'off'}`);
+  L.push(`Place: ${App.env}${App.env === 'garage' ? ' / ' + App.garageLook : ''} · seat spot ${G && G.seated ? G.seated() : '-'} · hover seat ${G && G.hoverSeat ? G.hoverSeat() : '-'}`);
+  L.push(`Hangout: ${H ? (H.joined ? 'joined ' + H.code : 'not joined') + ' · socket ' + (H.ws ? ['connecting', 'open', 'closing', 'closed'][H.ws.readyState] : 'none') + ' · id ' + H.id + ' · people ' + (H.peers || []).length : 'not loaded'}`);
+  if (P) {
+    const s = P.state;
+    L.push(`Poker: ready ${!!(s && P.gotMe)} · my seat ${P.mySeat} · chips ${P.bal} · phase ${s ? s.phase : 'no state'} · hand ${s ? s.hand : '-'} · to act ${s ? s.toAct : '-'}`);
+    if (s) L.push('Seats: ' + s.seats.map((x, i) => x ? `${i}:${x.name.slice(0, 7)} ${x.stack}${x.cards ? ' [2]' : ''}` : `${i}:-`).join('  '));
+    L.push(`My cards: ${P.hole ? P.hole.join(' ') : '-'} · board ${s && s.board.length ? s.board.join(' ') : '-'}`);
+  } else L.push('Poker: not loaded');
+  if (T) {
+    const w = new THREE.Vector3(); T.anchor.getWorldPosition(w); let o = T.g, chain = []; for (let k = 0; o && o !== scene && k < 12; k++) { chain.push(o.visible ? 1 : 0); o = o.parent; }
+    const c0 = P && P.mySeat >= 0 ? T.seats[P.mySeat].cards[0] : T.seats.find(x => x.cards[0].visible) && T.seats.find(x => x.cards[0].visible).cards[0];
+    const cw = new THREE.Vector3(); if (c0) c0.getWorldPosition(cw);
+    L.push(`Table 3D: shown ${T.g.visible} · parents ${chain.join('')} · in scene ${o === scene} · anchor ${v3s(w)}`);
+    L.push(`Cards shown ${T.seats.reduce((a, x) => a + x.cards.filter(c => c.visible).length, 0)} · stacks ${T.seats.map(x => x.stack.children.length).join(',')} · a card at ${c0 ? v3s(cw) : '-'} · bar ${T.bar.mesh.visible}`);
+  } else L.push('Table 3D: not built');
+  L.push(`Eyes: ${renderer.xr.isPresenting ? v3s(xrHead()) : v3s(camera.position)} · menu ${uiMesh.visible ? 'shown' : 'hidden'}`);
+  return L;
+}
+function drawDebug() {
+  const c = dbgCv.getContext('2d'); c.clearRect(0, 0, 1024, 1100);
+  rr(c, 4, 4, 1016, 1092, 20); c.fillStyle = 'rgba(14,18,21,0.95)'; c.fill(); c.strokeStyle = '#F2B233'; c.lineWidth = 4; c.stroke();
+  c.fillStyle = '#F2B233'; c.font = '700 34px "Barlow Condensed", sans-serif'; c.fillText('Debug info (screenshot this)', 24, 48);
+  c.font = '500 21px ui-monospace, Menlo, monospace'; let y = 88;
+  const wrap = (t, col) => { c.fillStyle = col; let line = ''; for (const w of t.split(' ')) { const tt = line ? line + ' ' + w : w; if (c.measureText(tt).width > 970) { c.fillText(line, 24, y); y += 26; line = w; } else line = tt; } if (line) { c.fillText(line, 24, y); y += 26; } };
+  for (const l of debugLines()) wrap(l, '#E9E6DF');
+  y += 10; c.fillStyle = '#94A1A8'; c.fillText('— log —', 24, y); y += 28;
+  for (const l of kbLog.slice(-Math.floor((1080 - y) / 26))) wrap(l, /ERROR/.test(l) ? '#ff8a80' : '#B8C2C8');
+  dbgTex.needsUpdate = true;
+}
+let dbgT = 0;
+function debugTick(dt) {
+  dbgMesh.visible = !!App.debug && renderer.xr.isPresenting;
+  if (!dbgMesh.visible) return;
+  if ((dbgT += dt) > 0.5 || App.debugDirty) { dbgT = 0; App.debugDirty = false; drawDebug(); }
+  // beside the menu if it's showing, otherwise in front of you, a little to the left
+  const head = xrHead(), f = xrForward();
+  if (uiMesh.visible) { dbgMesh.position.copy(uiMesh.position); dbgMesh.quaternion.copy(uiMesh.quaternion); dbgMesh.translateX(0.63); /* menu 0.6 m wide, this panel 0.62 m */ }
+  else { const side = new THREE.Vector3(f.z, 0, -f.x); dbgMesh.position.copy(head).addScaledVector(f, 0.9).addScaledVector(side, 0.35); dbgMesh.position.y = head.y - 0.05; dbgMesh.lookAt(head); }
+}
 function xrToast(msg, ms) {
   if (!renderer.xr.isPresenting) return;
   const c = xtCv.getContext('2d'); c.clearRect(0, 0, 1024, 200);
@@ -2286,15 +2349,20 @@ function joinDriveRace(code, from) { loadDrive().then(() => KBDrive.joinFriends(
 // yours to choose, and puts the poker panel at the table so you can pick a seat.
 // Pointing at a glowing seat in the casino: starts a room with friends if you aren't in one, then sits you there.
 async function pokerSeatFromHeadset(i) {
+  if (pokerSeatFromHeadset.busy) { KBLog('seat: already working on it'); return; }
+  pokerSeatFromHeadset.busy = true;
+  toast(`Taking seat ${i + 1}…`, 2500);
   try {
-    await loadHang();
-    if (!KBHang.active()) { await KBHang.invite(); if (!KBHang.active()) return; }
-    await window.KBLoadPoker(); KBPoker.openXR();
+    await loadHang(); KBLog('seat: hangout code ready, in a room: ' + KBHang.active());
+    if (!KBHang.active()) { await KBHang.invite(); KBLog('seat: room started: ' + KBHang.active()); if (!KBHang.active()) return; }
+    await window.KBLoadPoker(); KBPoker.openXR(); KBLog('seat: poker loaded, waiting for the table');
     for (let k = 0; k < 40 && !KBPoker.ready(); k++) await new Promise(r => setTimeout(r, 250));
+    KBLog('seat: table ready: ' + KBPoker.ready());
     if (!KBPoker.ready()) { toast('Still connecting to the room. Try the seat again in a moment.', 5000); return; }
     if (!(KBHang.others && KBHang.others() > 0)) KBPoker.wantBots(3); // on your own: bots join so you can play straight away
-    KBPoker.sitAt(i);
-  } catch (e) { toast('Poker: ' + (e.message || e) + '.', 7000); }
+    KBPoker.sitAt(i); KBLog('seat: asked to sit at ' + i);
+  } catch (e) { KBLog('seat: ERROR ' + (e.message || e)); toast('Poker: ' + (e.message || e) + '.', 7000); }
+  finally { pokerSeatFromHeadset.busy = false; }
 }
 async function pokerFromHeadset() {
   try {
@@ -2584,6 +2652,7 @@ function frameBody(time, frame) {
   safeTick('poker', () => window.KBPoker && KBPoker.frame(dt, frame));
   safeTick('weather', () => window.KBWeather && KBWeather.frame(dt));
   safeTick('headset', () => xrBodyTick(frame, dt));
+  safeTick('debug', () => debugTick(dt));
   if (window.KBDrive && KBDrive.active) { KBDrive.frame(dt, frame); return; }
   if (App.source === 'replay') Replay.tick(dt);
   if (App.source === 'live') Live.tick();
@@ -2747,8 +2816,8 @@ document.querySelectorAll('#lookSeg button').forEach(b => b.onclick = () => setL
 $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
-const HANG_VER = '8';
-const POKER_VER = '8';
+const HANG_VER = '9';
+const POKER_VER = '9';
 let pokerLoading = null;
 window.KBLoadPoker = function loadPoker() { // poker and race bets, for people in a hangout
   if (window.KBPoker) return Promise.resolve();

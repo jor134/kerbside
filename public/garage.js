@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 14;
+const GARAGE_BUILD = 15;
 
 /* ---------------- Materials ---------------- */
 const toon = (c, gloss) => KBMat({ color: c }, gloss);
@@ -311,6 +311,7 @@ function updateSeats(dt) {
   if (!built) return;
   const on = seatsShown(); built.casino.markers.forEach(m => { m.g.visible = on; }); if (!on) { hoverSeat = -1; return; }
   let hv = -1; for (const c of KB.controllers) { const i = seatHit(c); if (i >= 0) hv = i; }
+  if (hv >= 0 && window.KBPoker && KBPoker.seatName && KBPoker.seatName(hv)) hv = -1; // taken seats don't light up
   hoverSeat = hv; const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 300);
   const P = window.KBPoker, tick = (seatT += dt) > 0.4; if (tick) seatT = 0;
   built.casino.markers.forEach((m, i) => {
@@ -318,7 +319,7 @@ function updateSeats(dt) {
     m.ring.material.opacity = taken ? 0.15 : hot ? 1 : 0.4 + 0.3 * pulse; m.glow.material.opacity = taken ? 0 : hot ? 0.28 : 0.06 + 0.06 * pulse;
     m.ring.scale.setScalar(hot ? 1.12 : 1);
     if (!tick && m.sig) return;
-    const sig = `${taken}|${hot}`; if (sig === m.sig) return; m.sig = sig;
+    const sig = `${taken}|${hot}`; if (sig === m.sig) return; m.sig = sig; if (hot) window.KBLog && KBLog(`pointing at seat ${i}`);
     const c = m.cv.getContext('2d'); c.clearRect(0, 0, 320, 96);
     KB.rr(c, 4, 4, 312, 88, 16); c.fillStyle = hot ? 'rgba(201,161,59,.95)' : 'rgba(24,14,18,.85)'; c.fill(); c.strokeStyle = '#c9a13b'; c.lineWidth = 4; c.stroke();
     c.fillStyle = hot ? '#1c0f12' : '#E9E6DF'; c.font = '700 36px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
@@ -715,6 +716,6 @@ function sessionEnded() { win.placed = false; frozenYaw = null; lastAnchor.set(1
 window.KBGarage = { frame, startWindowPlacing, confirmWindow, canWindow, sessionEnded, setTeamColor, setAway, away, atPitwall, flatCam, lookBy, zoomBy, build: GARAGE_BUILD,
   setLook, look: () => look_, seatAt, seated: () => spot && spot.seat != null ? spot.seat : -1,
   pokerAnchor: () => built && built.casino.anchor, pokerGeo: POKER, seatSpot, stencil: outsideWindow,
-  roaming: () => !!(spot && spot.free && App.env === 'garage'), pickSeat,
+  roaming: () => !!(spot && spot.free && App.env === 'garage'), pickSeat, hoverSeat: () => (seatsShown() ? hoverSeat : -1),
   _dbg: () => ({ TR, built, SCR, OFF, look, spot, tp, tpMark }) };
 })();

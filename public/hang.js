@@ -5,7 +5,7 @@
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const renderer = KB.renderer;
-const HANG_BUILD = 8;
+const HANG_BUILD = 9;
 const COLORS = ['#D2342B', '#F28A1E', '#E8C33A', '#2F8F4E', '#2BB5A0', '#2E6FD9', '#8E5BD6', '#E66BB0', '#C9CED3', '#F2F2EF'];
 
 const me = Object.assign({ name: '', color: COLORS[Math.floor(Math.random() * COLORS.length)], follow: true }, store.get('hang:me', {}));
@@ -54,12 +54,16 @@ async function join(code) {
   await getIce();
   unlockAudio();
   const ws = H.ws = new WebSocket(url);
+  window.KBLog && KBLog('hangout: connecting to room ' + H.code);
   ws.onopen = () => {
+    window.KBLog && KBLog('hangout: connected');
     sendHello();
     clearInterval(H.pingT); H.pingT = setInterval(() => send({ t: 'ping', c: Date.now() }), 15000);
   };
   ws.onmessage = e => { let m; try { m = JSON.parse(e.data); } catch (err) { return; } onMsg(m); };
-  ws.onclose = () => {
+  ws.onerror = () => window.KBLog && KBLog('hangout: connection error');
+  ws.onclose = e => {
+    window.KBLog && KBLog('hangout: connection closed ' + (e && e.code));
     if (H.ws !== ws) return;
     H.ws = null; clearInterval(H.pingT);
     if (H.joined) { UI.render('Connection lost. Reconnecting…'); setTimeout(() => { if (H.joined && !H.ws) join(H.code); }, 3000); }
@@ -685,7 +689,7 @@ async function inviteFromHeadset() {
 }
 const Hang = {
   open(prefill) { UI.build(); if (prefill) H.pending = String(prefill).toUpperCase(); UI.show(true); },
-  join, leave, frame, onSelect, publishEnv, send, pid: () => pid, myId: () => H.id, invite: inviteFromHeadset, code: () => (H.joined ? H.code : ''), others: () => H.peers.filter(p => p.id !== H.id).length, name: () => myName(),
+  hangBuild: HANG_BUILD, join, leave, frame, onSelect, publishEnv, send, pid: () => pid, myId: () => H.id, invite: inviteFromHeadset, code: () => (H.joined ? H.code : ''), others: () => H.peers.filter(p => p.id !== H.id).length, name: () => myName(),
   active() { return H.joined; },
   isHost,
   _H: H

@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 8;
+const POKER_BUILD = 9;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -41,6 +41,9 @@ const rankTxt = r => r === 'T' ? '10' : r;
 
 /* ---------------- Messages from the hangout ---------------- */
 function onMsg(m) {
+  if (window.KBLog && m.a !== 'state' && m.a !== 'hole') KBLog(`poker: ${m.a}${m.a === 'err' ? ' ' + m.msg : m.a === 'me' ? ' seat ' + m.seat + ', chips ' + m.bal : ''}`);
+  if (window.KBLog && m.a === 'hole' && m.seat !== P.mySeat) KBLog(`poker: I'm in seat ${m.seat}`);
+  if (window.KBLog && m.a === 'state' && (!P.state || P.state.hand !== m.s.hand || P.state.phase !== m.s.phase)) KBLog(`poker: hand ${m.s.hand} ${m.s.phase}`);
   if (m.a === 'state') {
     const prev = P.state; P.state = m.s; P.bets = m.bets || [];
     if (!prev || prev.hand !== m.s.hand || prev.toAct !== m.s.toAct) { P.pending = 0; P.pendingChips = []; P.raiseTo = 0; }
@@ -336,8 +339,9 @@ const vT = new THREE.Vector3();
 function update3D() {
   const anchor = window.KBGarage && KBGarage.pokerAnchor && KBGarage.pokerAnchor();
   const show = !!anchor && App.env === 'garage' && App.garageLook === 'casino' && window.KBHang && KBHang.active();
+  if (show !== P.wasShown && window.KBLog) { KBLog(`poker table ${show ? 'shown' : 'hidden'} (garage ${!!anchor}, place ${App.env}/${App.garageLook}, in a room ${!!(window.KBHang && KBHang.active())})`); P.wasShown = show; }
   if (!show) { if (T3) T3.g.visible = false; return; }
-  if (!T3 || T3.anchor !== anchor) T3 = build3D(anchor);
+  if (!T3 || T3.anchor !== anchor) { T3 = build3D(anchor); window.KBLog && KBLog('poker table built'); }
   T3.g.visible = true;
   const s = P.state, now = Date.now();
   for (let i = 0; i < SEATS; i++) {
