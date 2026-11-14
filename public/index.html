@@ -2273,29 +2273,46 @@ window.addEventListener('error', e => KBLog('ERROR ' + (e.message || e)));
 window.addEventListener('unhandledrejection', e => KBLog('ERROR (async) ' + ((e.reason && e.reason.message) || e.reason)));
 const dbgCv = document.createElement('canvas'); dbgCv.width = 1024; dbgCv.height = 1100;
 const dbgTex = new THREE.CanvasTexture(dbgCv);
-const dbgMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.62 * 1100 / 1024), new THREE.MeshBasicMaterial({ map: dbgTex, transparent: true, depthTest: false }));
+const dbgMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.5 * 1100 / 1024), new THREE.MeshBasicMaterial({ map: dbgTex, transparent: true, depthTest: false }));
 dbgMesh.visible = false; dbgMesh.renderOrder = 29; scene.add(dbgMesh);
 const v3s = v => v ? `${v.x.toFixed(2)}, ${v.y.toFixed(2)}, ${v.z.toFixed(2)}` : '-';
 function debugLines() {
   const L = [], H = window.KBHang && KBHang._H, P = window.KBPoker && KBPoker._P, T = window.KBPoker && KBPoker._T && KBPoker._T(), G = window.KBGarage;
-  L.push(`Builds: garage ${G ? G.build : '-'} · poker ${window.KBPoker ? KBPoker.build : '-'} · hangout ${window.KBHang ? KBHang.hangBuild : '-'} · headset ${renderer.xr.isPresenting ? App.xrMode : 'off'}`);
-  L.push(`Place: ${App.env}${App.env === 'garage' ? ' / ' + App.garageLook : ''} · seat spot ${G && G.seated ? G.seated() : '-'} · hover seat ${G && G.hoverSeat ? G.hoverSeat() : '-'}`);
-  L.push(`Hangout: ${H ? (H.joined ? 'joined ' + H.code : 'not joined') + ' · socket ' + (H.ws ? ['connecting', 'open', 'closing', 'closed'][H.ws.readyState] : 'none') + ' · id ' + H.id + ' · people ' + (H.peers || []).length : 'not loaded'}`);
-  if (P) {
-    const s = P.state;
-    L.push(`Poker: ready ${!!(s && P.gotMe)} · my seat ${P.mySeat} · chips ${P.bal} · phase ${s ? s.phase : 'no state'} · hand ${s ? s.hand : '-'} · to act ${s ? s.toAct : '-'}`);
-    if (s) L.push('Seats: ' + s.seats.map((x, i) => x ? `${i}:${x.name.slice(0, 7)} ${x.stack}${x.cards ? ' [2]' : ''}` : `${i}:-`).join('  '));
-    L.push(`My cards: ${P.hole ? P.hole.join(' ') : '-'} · board ${s && s.board.length ? s.board.join(' ') : '-'}`);
-  } else L.push('Poker: not loaded');
-  if (T) {
+  const eye = renderer.xr.isPresenting ? xrHead() : camera.position.clone();
+  if (T) { // the poker table first: it's what we're chasing
     const w = new THREE.Vector3(); T.anchor.getWorldPosition(w); let o = T.g, chain = []; for (let k = 0; o && o !== scene && k < 12; k++) { chain.push(o.visible ? 1 : 0); o = o.parent; }
-    const c0 = P && P.mySeat >= 0 ? T.seats[P.mySeat].cards[0] : T.seats.find(x => x.cards[0].visible) && T.seats.find(x => x.cards[0].visible).cards[0];
-    const cw = new THREE.Vector3(); if (c0) c0.getWorldPosition(cw);
-    L.push(`Table 3D: shown ${T.g.visible} · parents ${chain.join('')} · in scene ${o === scene} · anchor ${v3s(w)}`);
-    L.push(`Cards shown ${T.seats.reduce((a, x) => a + x.cards.filter(c => c.visible).length, 0)} · stacks ${T.seats.map(x => x.stack.children.length).join(',')} · a card at ${c0 ? v3s(cw) : '-'} · bar ${T.bar.mesh.visible}`);
-  } else L.push('Table 3D: not built');
-  L.push(`Eyes: ${renderer.xr.isPresenting ? v3s(xrHead()) : v3s(camera.position)} · menu ${uiMesh.visible ? 'shown' : 'hidden'}`);
+    const mineS = P && P.mySeat >= 0 ? T.seats[P.mySeat] : null, cw = new THREE.Vector3(), sw = new THREE.Vector3();
+    if (mineS) { mineS.cards[0].getWorldPosition(cw); mineS.stack.getWorldPosition(sw); }
+    const e = T.g.matrixWorld.elements, finite = e.every(Number.isFinite);
+    L.push(`TABLE: shown ${T.g.visible} · parents ${chain.join('')} · in scene ${o === scene} · matrix ok ${finite} · scale ${T.g.getWorldScale(new THREE.Vector3()).x.toFixed(2)}`);
+    L.push(`Table centre ${v3s(w)} · you are ${eye.distanceTo(w).toFixed(2)} m from it (chair is ~1.2 m)`);
+    L.push(`Cards shown ${T.seats.reduce((a, x) => a + x.cards.filter(c => c.visible).length, 0)} · stacks ${T.seats.map(x => x.stack.children.length).join(',')} · my card ${mineS ? v3s(cw) + ' (' + eye.distanceTo(cw).toFixed(2) + ' m)' : '-'} · my chips ${mineS ? v3s(sw) : '-'} · bar ${T.bar.mesh.visible}`);
+  } else L.push('TABLE: not built');
+  L.push(`Eyes ${v3s(eye)} · menu ${uiMesh.visible ? 'shown' : 'hidden'} · place ${App.env}${App.env === 'garage' ? '/' + App.garageLook : ''} · seat spot ${G && G.seated ? G.seated() : '-'}`);
+  if (P) {
+    const s = P.state, me = s && P.mySeat >= 0 ? s.seats[P.mySeat] : null;
+    L.push(`Poker: ready ${!!(s && P.gotMe)} · my seat ${P.mySeat}${me && me.sitOut ? ' (SITTING OUT)' : ''} · phase ${s ? s.phase : 'no state'} · hand ${s ? s.hand : '-'} · to act ${s ? s.toAct : '-'}`);
+    if (s) L.push('Seats: ' + s.seats.map((x, i) => x ? `${i}:${x.name.slice(0, 7)} ${x.stack}${x.cards ? ' [2]' : ''}${x.sitOut ? ' away' : ''}` : `${i}:-`).join('  '));
+  } else L.push('Poker: not loaded');
+  L.push(`Hangout: ${H ? (H.joined ? 'joined ' + H.code : 'not joined') + ' · socket ' + (H.ws ? ['connecting', 'open', 'closing', 'closed'][H.ws.readyState] : 'none') + ' · people ' + (H.peers || []).length : 'not loaded'} · builds g${G ? G.build : '-'} p${window.KBPoker ? KBPoker.build : '-'} h${window.KBHang ? KBHang.hangBuild : '-'}`);
+  L.push('Test cubes: pink = on the poker table, blue = on the casino, yellow = in the room at the table');
   return L;
+}
+// Three test cubes (Debug on, casino): which ones you can see tells whether the poker table's own
+// objects are drawn, the casino's are, and anything placed at the table's spot is.
+const dbgCubes = (() => {
+  const mk = c => { const m = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.08), new THREE.MeshBasicMaterial({ color: c })); m.visible = false; return m; };
+  return { pink: mk(0xff3fa4), blue: mk(0x3f8cff), yellow: mk(0xffd23f) };
+})();
+scene.add(dbgCubes.yellow);
+function debugCubes() {
+  const T = window.KBPoker && KBPoker._T && KBPoker._T(), on = !!App.debug && !!T;
+  for (const k in dbgCubes) dbgCubes[k].visible = on;
+  if (!on) return;
+  if (dbgCubes.pink.parent !== T.g) { T.g.add(dbgCubes.pink); dbgCubes.pink.position.set(0, 0.2, 0); }
+  const casino = T.anchor.parent; if (dbgCubes.blue.parent !== casino) { casino.add(dbgCubes.blue); }
+  dbgCubes.blue.position.copy(T.anchor.position); dbgCubes.blue.position.x += 0.15; dbgCubes.blue.position.y += 0.2;
+  T.anchor.getWorldPosition(dbgCubes.yellow.position); dbgCubes.yellow.position.x -= 0.15; dbgCubes.yellow.position.y += 0.2;
 }
 function drawDebug() {
   const c = dbgCv.getContext('2d'); c.clearRect(0, 0, 1024, 1100);
@@ -2311,12 +2328,13 @@ function drawDebug() {
 let dbgT = 0;
 function debugTick(dt) {
   dbgMesh.visible = !!App.debug && renderer.xr.isPresenting;
-  if (!dbgMesh.visible) return;
+  if (!dbgMesh.visible) { debugCubes(); return; }
+  debugCubes();
   if ((dbgT += dt) > 0.5 || App.debugDirty) { dbgT = 0; App.debugDirty = false; drawDebug(); }
   // beside the menu if it's showing, otherwise in front of you, a little to the left
   const head = xrHead(), f = xrForward();
-  if (uiMesh.visible) { dbgMesh.position.copy(uiMesh.position); dbgMesh.quaternion.copy(uiMesh.quaternion); dbgMesh.translateX(0.63); /* menu 0.6 m wide, this panel 0.62 m */ }
-  else { const side = new THREE.Vector3(f.z, 0, -f.x); dbgMesh.position.copy(head).addScaledVector(f, 0.9).addScaledVector(side, 0.35); dbgMesh.position.y = head.y - 0.05; dbgMesh.lookAt(head); }
+  if (uiMesh.visible) { dbgMesh.position.copy(uiMesh.position); dbgMesh.quaternion.copy(uiMesh.quaternion); dbgMesh.translateX(0.57); /* menu 0.6 m wide, this panel 0.5 m */ }
+  else { const side = new THREE.Vector3(f.z, 0, -f.x); dbgMesh.position.copy(head).addScaledVector(f, 1.1).addScaledVector(side, 0.45); dbgMesh.position.y = head.y + 0.05; dbgMesh.lookAt(head); }
 }
 function xrToast(msg, ms) {
   if (!renderer.xr.isPresenting) return;
