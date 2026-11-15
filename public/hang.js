@@ -5,7 +5,7 @@
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const renderer = KB.renderer;
-const HANG_BUILD = 12;
+const HANG_BUILD = 13;
 const COLORS = ['#D2342B', '#F28A1E', '#E8C33A', '#2F8F4E', '#2BB5A0', '#2E6FD9', '#8E5BD6', '#E66BB0', '#C9CED3', '#F2F2EF'];
 
 const me = Object.assign({ name: '', color: COLORS[Math.floor(Math.random() * COLORS.length)], follow: true }, store.get('hang:me', {}));
@@ -326,9 +326,22 @@ function nameSprite(name, color, muted) {
 function getAvatar(id) {
   let a = H.avatars.get(id);
   const peer = H.peers.find(p => p.id === id) || {};
-  const key = (peer.name || '') + '|' + (peer.color || '') + '|' + !!peer.muted;
+  const drvOK = !!(window.KBDriver && KBDriver.ready());
+  if (!drvOK && window.KBLoadDriver) KBLoadDriver();
+  const key = (peer.name || '') + '|' + (peer.color || '') + '|' + !!peer.muted + '|' + drvOK;
   if (a && a.key === key) return a;
   if (a) dropAvatar(id);
+  if (drvOK) { // the racing-driver model (driver.js), in this person's colour
+    const drv = KBDriver.make(peer.color || '#9aa5ab'), g = new THREE.Group(); g.add(drv.g);
+    const head = new THREE.Group(), torso = new THREE.Group();
+    const ring = new THREE.Mesh(AG.ring, new THREE.MeshBasicMaterial({ color: 0xE9E6DF, transparent: true, opacity: 0 }));
+    ring.rotation.x = Math.PI / 2; ring.position.y = 0.2; head.add(ring); // a halo that glows when they talk
+    const L = { side: -1, glove: new THREE.Group(), hand: null }, R = { side: 1, glove: new THREE.Group(), hand: null };
+    const label = nameSprite(peer.name || 'Friend', peer.color || '#9aa5ab', !!peer.muted);
+    g.add(head, torso, label, L.glove, R.glove); KB.scene.add(g);
+    a = { g, head, torso, L, R, ring, label, key, cur: null, drv };
+    H.avatars.set(id, a); return a;
+  }
   const suit = KBMat({ color: new THREE.Color(peer.color || '#9aa5ab') }, 'satin');
   const M = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); if (x !== undefined) m.position.set(x, y, z); return m; };
   const g = new THREE.Group();
@@ -454,6 +467,14 @@ function poseBody(a, d, T, fx, fz, dt) {
     o.boot.position.set(P.foot.x, P.foot.y - 0.07, P.foot.z); o.boot.rotation.set(0, yaw, 0);
   }
 }
+function poseDriver(a, d, T, fx, fz, dt) {
+  const hands = [a.L, a.R].map(o => {
+    const loc = d && (o.side < 0 ? d.l : d.r); if (!loc) { o.hand = null; return null; }
+    toWorld(T, loc, P.tgt); if (!o.hand) o.hand = P.tgt.clone(); else o.hand.lerp(P.tgt, Math.min(1, dt * 14)); return o.hand;
+  });
+  const r = KBDriver.pose(a.drv, { eye: a.cur, headQ: a.head.quaternion, fwd: P.fwd.set(fx, 0, fz), floorY: renderer.xr.isPresenting ? 0 : -0.78, hands });
+  a.L.glove.position.copy(r.hands[0]); a.R.glove.position.copy(r.hands[1]);
+}
 function updateAvatars(dt) {
   const T = tableFrame(), driving = window.KBDrive && KBDrive.active;
   const show = T && App.view === 'tabletop' && !driving && App.track;
@@ -470,7 +491,7 @@ function updateAvatars(dt) {
     const [fx, fz] = rotY(fLoc[0], fLoc[2], T.yaw);
     a.head.position.copy(a.cur);
     a.head.rotation.set(Math.asin(Math.max(-0.9, Math.min(0.9, fLoc[1] || 0))) * 0.8, Math.atan2(-fx, -fz), 0, 'YXZ');
-    poseBody(a, d, T, fx, fz, dt);
+    if (a.drv) poseDriver(a, d, T, fx, fz, dt); else poseBody(a, d, T, fx, fz, dt);
     if (window.KBPoker && KBPoker.remoteTrick) for (const o of [a.L, a.R]) KBPoker.remoteTrick(o.glove, d && d.k && d.k.s === (o.side < 0 ? 'l' : 'r') ? d.k.d : 0, dt);
     // in the headset, a name tag never sits lower than 50 cm over your own eyes, so a friend's tag can't block your view
     a.label.position.set(a.cur.x, Math.max(a.cur.y + 0.3, myEyeY + 0.5), a.cur.z);

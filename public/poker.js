@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 13;
+const POKER_BUILD = 14;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -358,6 +358,34 @@ function build3D(anchor) {
 }
 const vT = new THREE.Vector3();
 const BAR_HANDLE = 40, BAR_H = 520; // the bar's canvas: drag strip, then the buttons
+/* Practice bots sit at the table as racing drivers, each in their own colour. They keep their hands on the
+   felt and turn their heads to whoever is playing (or to the cards in the middle). */
+const BOT_COLOURS = ['#e8412c', '#2f7de1', '#22a35a', '#f2b233', '#8e44ad', '#16a6b6'];
+const bE = new THREE.Euler(0, 0, 0, 'YXZ'), bQ = new THREE.Quaternion();
+function botBodies(s) {
+  if (!T3.bots) T3.bots = [];
+  const floorY = -(KBGarage.pokerGeo.top + 0.0065), t = performance.now() / 1000;
+  for (let i = 0; i < SEATS; i++) {
+    const st = s && s.seats[i], bot = !!(st && typeof st.pid === 'string' && st.pid.startsWith('bot-'));
+    let B = T3.bots[i];
+    if (!bot) { if (B) B.drv.g.visible = false; continue; }
+    if (!window.KBDriver || !KBDriver.ready()) { window.KBLoadDriver && KBLoadDriver(); continue; }
+    const colour = BOT_COLOURS[Math.max(0, ['Bot Ava', 'Bot Max', 'Bot Lin', 'Bot Raj', 'Bot Zoe', 'Bot Teo'].indexOf(st.name)) % BOT_COLOURS.length];
+    if (!B) { B = T3.bots[i] = { drv: KBDriver.make(colour), q: new THREE.Quaternion(), colour }; T3.g.add(B.drv.g); }
+    if (B.colour !== colour) { B.drv.setColor(colour); B.colour = colour; }
+    B.drv.g.visible = true;
+    const S = T3.seats[i], geo = KBGarage.pokerGeo;
+    const e = (f, y) => new THREE.Vector3(S.dir.x * geo.rx * f, y, S.dir.z * geo.rz * f); // f = 1 at the felt edge
+    const eye = e(1.24, 0.46 + Math.sin(t * 1.3 + i) * 0.004); // breathing
+    // look at whoever's turn it is, or at the board
+    const tgt = s.toAct >= 0 && s.toAct !== i ? (() => { const D = T3.seats[s.toAct].dir; return new THREE.Vector3(D.x * geo.rx * 1.3, 0.4, D.z * geo.rz * 1.3); })() : new THREE.Vector3(0, 0, 0);
+    const dir = tgt.sub(eye); bE.set(Math.atan2(dir.y, Math.hypot(dir.x, dir.z)) * 0.8, Math.atan2(-dir.x, -dir.z), 0); bQ.setFromEuler(bE);
+    B.q.slerp(bQ, 0.06);
+    const fwd = S.dir.clone().multiplyScalar(-1);
+    const hands = [-1, 1].map(sd => e(0.97, 0.035).addScaledVector(S.side, sd * 0.13 * (S.side.dot(new THREE.Vector3(-fwd.z, 0, fwd.x)) > 0 ? 1 : -1)));
+    KBDriver.pose(B.drv, { eye, headQ: B.q, fwd, floorY, hands, seated: { y: floorY + 0.5 } });
+  }
+}
 function update3D(frame) {
   const eyeY = renderer.xr.isPresenting && T3 ? T3.g.worldToLocal(KB.xrHead().clone()).y : 0;
   const anchor = window.KBGarage && KBGarage.pokerAnchor && KBGarage.pokerAnchor();
@@ -398,6 +426,7 @@ function update3D(frame) {
     if (renderer.xr.isPresenting) { S.plate.position.y = Math.max(0.5, eyeY + 0.5); S.plate.visible = !(mine && P.mySeat >= 0); }
     else { S.plate.position.y = 0.5; S.plate.visible = true; }
   }
+  botBodies(s);
   if (s) {
     T3.board.forEach((c, k) => { c.visible = k < s.board.length; if (c.visible) setCard(c, s.board[k], true); });
     buildStack(T3.pot, s.pot);
