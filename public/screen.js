@@ -36,7 +36,7 @@
     c.fillStyle = '#0d1114'; c.fillRect(0, 0, 1024, 576);
     for (let x = 0; x < 1024; x += 64) { c.fillStyle = (x / 64) % 2 ? '#E9E6DF' : '#D2342B'; c.fillRect(x, 0, 64, 10); }
     c.textAlign = 'center'; c.fillStyle = '#E9E6DF'; c.font = '700 60px "Barlow Condensed", sans-serif';
-    const msg = S.err ? 'Can’t play that' : !s ? 'Room screen' : s.mode === 'share' ? `Waiting for ${s.name || 'a friend'}’s screen…` : s.mode === 'browser' ? 'Starting the browser…' : 'Loading…';
+    const msg = S.err ? 'Can’t play that' : !s ? 'Room screen' : s.mode === 'share' ? `Waiting for ${s.name || 'a friend'}’s screen…` : s.mode === 'browser' ? (S.note || 'Starting the browser…') : 'Loading…';
     c.fillText(msg, 512, 250);
     c.fillStyle = '#94A1A8'; c.font = '500 30px Barlow, sans-serif';
     const lines = S.err ? wrapLines(c, S.err, 900) : !s ? ['Open browser under the screen, or share a tab or play a link', 'from Watch with friends. Everyone in the room sees it.'] : [];
@@ -190,12 +190,23 @@
     if (S.s !== s) return; // something else went on while it loaded
     const div = S.hbDiv || (S.hbDiv = document.createElement('div'));
     div.style.cssText = 'position:fixed;left:-10000px;top:0;width:1280px;height:720px;'; if (!div.parentNode) document.body.appendChild(div);
-    try {
-      const hb = await Hyperbeam(div, s.embed, { adminToken: s.admin, delegateKeyboard: false, volume: S.vol, frameCb: onFrame, audioTrackCb: onAudio,
-        onDisconnect: () => { if (S.hb === hb) { S.err = 'The room browser closed.'; drawIdle(); } } });
-      if (S.s !== s) { hb.destroy(); return; }
-      S.hb = hb; drawStrip(); drawKb();
-    } catch (e) { S.err = 'Couldn’t connect to the room browser (' + (e.name || e.message || e) + ').'; drawIdle(); }
+    // A brand-new cloud browser takes a few seconds to boot, longer on a phone connection: the player's own
+    // limit is 2 seconds, so give it 20, and try a few times before giving up.
+    let last = null;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      if (S.s !== s) return;
+      if (attempt > 1) { S.err = ''; S.note = `Connecting to the room browser… (try ${attempt} of 4)`; drawIdle(); }
+      try {
+        const hb = await Hyperbeam(div, s.embed, { adminToken: s.admin, delegateKeyboard: false, volume: S.vol, timeout: 20000, frameCb: onFrame, audioTrackCb: onAudio,
+          onDisconnect: () => { if (S.hb === hb) { S.err = 'The room browser closed.'; drawIdle(); } } });
+        if (S.s !== s) { hb.destroy(); return; }
+        S.hb = hb; S.note = ''; drawStrip(); drawKb(); return;
+      } catch (e) {
+        last = e; if (e && e.name === 'SessionTerminatedError') break; // it's gone: no point retrying
+        await new Promise(r => setTimeout(r, 1500 * attempt));
+      }
+    }
+    S.note = ''; S.err = 'Couldn’t connect to the room browser (' + ((last && (last.name || last.message)) || last) + '). Press Stop, then Open browser to start a fresh one.'; drawIdle();
   }
   function onFrame(f) {
     if (!S.hbTex) S.hbTex = new THREE.Texture();

@@ -816,6 +816,9 @@ export class HangRoom extends DurableObject {
     const key = this.env && this.env.HYPERBEAM_KEY;
     if (!key) { this.send(p.ws, { t: 'toast', msg: 'The room browser isn’t switched on yet: add your Hyperbeam API key as the HYPERBEAM_KEY secret on the Worker.' }); return; }
     if (this.hbStarting) return;
+    if (this.hb) { // still alive? (test keys and idle sessions end on Hyperbeam's side)
+      try { const g = await fetch('https://engine.hyperbeam.com/v0/vm/' + encodeURIComponent(this.hb.session_id), { headers: { Authorization: 'Bearer ' + key } }); const j = g.ok ? await g.json() : null; if (!j || j.termination_date) this.hb = null; } catch (e) {}
+    }
     if (!this.hb) {
       this.hbStarting = true;
       const url = typeof startUrl === 'string' && /^https?:\/\//i.test(startUrl) && startUrl.length < 2000 ? startUrl : 'https://www.google.com';
