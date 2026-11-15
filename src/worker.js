@@ -754,7 +754,7 @@ export class HangRoom extends DurableObject {
     }
   }
   roster() {
-    return { t: 'roster', host: this.host, peers: [...this.peers.entries()].map(([id, p]) => ({ id, name: p.name, color: p.color, device: p.device, muted: p.muted })) };
+    return { t: 'roster', host: this.host, peers: [...this.peers.entries()].map(([id, p]) => ({ id, name: p.name, color: p.color, device: p.device, muted: p.muted, pid: p.pid })) };
   }
   send(ws, m) { try { ws.send(typeof m === 'string' ? m : JSON.stringify(m)); } catch (e) {} }
   broadcast(m, except) {

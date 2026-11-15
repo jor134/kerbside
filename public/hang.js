@@ -5,7 +5,7 @@
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const renderer = KB.renderer;
-const HANG_BUILD = 14;
+const HANG_BUILD = 15;
 const COLORS = ['#D2342B', '#F28A1E', '#E8C33A', '#2F8F4E', '#2BB5A0', '#2E6FD9', '#8E5BD6', '#E66BB0', '#C9CED3', '#F2F2EF'];
 
 const me = Object.assign({ name: '', color: COLORS[Math.floor(Math.random() * COLORS.length)], follow: true }, store.get('hang:me', {}));
@@ -467,12 +467,13 @@ function poseBody(a, d, T, fx, fz, dt) {
     o.boot.position.set(P.foot.x, P.foot.y - 0.07, P.foot.z); o.boot.rotation.set(0, yaw, 0);
   }
 }
-function poseDriver(a, d, T, fx, fz, dt) {
-  const hands = [a.L, a.R].map(o => {
-    const loc = d && (o.side < 0 ? d.l : d.r); if (!loc) { o.hand = null; return null; }
+function poseDriver(a, d, T, fx, fz, dt, sp) {
+  const hands = [a.L, a.R].map((o, i) => {
+    const loc = d && (o.side < 0 ? d.l : d.r); if (!loc) { o.hand = null; return sp ? sp.hands[i] : null; }
     toWorld(T, loc, P.tgt); if (!o.hand) o.hand = P.tgt.clone(); else o.hand.lerp(P.tgt, Math.min(1, dt * 14)); return o.hand;
   });
-  const r = KBDriver.pose(a.drv, { eye: a.cur, headQ: a.head.quaternion, fwd: P.fwd.set(fx, 0, fz), floorY: renderer.xr.isPresenting ? 0 : -0.78, hands });
+  const r = KBDriver.pose(a.drv, { eye: a.cur, headQ: a.head.quaternion, fwd: P.fwd.set(fx, 0, fz), hands,
+    floorY: sp ? sp.floorY : renderer.xr.isPresenting ? 0 : -0.78, seated: sp ? { y: sp.seatY } : null });
   a.L.glove.position.copy(r.hands[0]); a.R.glove.position.copy(r.hands[1]);
 }
 function updateAvatars(dt) {
@@ -489,9 +490,16 @@ function updateAvatars(dt) {
     toWorld(T, hLoc, tv);
     if (!a.cur) a.cur = tv.clone(); else a.cur.lerp(tv, Math.min(1, dt * 12));
     const [fx, fz] = rotY(fLoc[0], fLoc[2], T.yaw);
+    // sitting at the poker table: put them in their chair. If their headset already has them there, follow it;
+    // if not (a phone or computer, or a headset that hasn't moved them yet), seat the avatar ourselves.
+    const sp = window.KBPoker && KBPoker.seatPose && KBPoker.seatPose(KBPoker.seatOf(p));
+    const inChair = sp && !(d && tv.distanceTo(sp.eye) < 0.9);
+    if (inChair) a.cur.copy(sp.eye);
     a.head.position.copy(a.cur);
-    a.head.rotation.set(Math.asin(Math.max(-0.9, Math.min(0.9, fLoc[1] || 0))) * 0.8, Math.atan2(-fx, -fz), 0, 'YXZ');
-    if (a.drv) poseDriver(a, d, T, fx, fz, dt); else poseBody(a, d, T, fx, fz, dt);
+    if (inChair) a.head.rotation.set(-0.35, Math.atan2(-sp.fwd.x, -sp.fwd.z), 0, 'YXZ'); // looking down at the table
+    else a.head.rotation.set(Math.asin(Math.max(-0.9, Math.min(0.9, fLoc[1] || 0))) * 0.8, Math.atan2(-fx, -fz), 0, 'YXZ');
+    if (a.drv) poseDriver(a, inChair ? null : d, T, inChair ? sp.fwd.x : fx, inChair ? sp.fwd.z : fz, dt, sp);
+    else poseBody(a, inChair ? null : d, T, inChair ? sp.fwd.x : fx, inChair ? sp.fwd.z : fz, dt);
     if (window.KBPoker && KBPoker.remoteTrick) for (const o of [a.L, a.R]) KBPoker.remoteTrick(o.glove, d && d.k && d.k.s === (o.side < 0 ? 'l' : 'r') ? d.k.d : 0, dt);
     // in the headset, a name tag never sits lower than 50 cm over your own eyes, so a friend's tag can't block your view
     a.label.position.set(a.cur.x, Math.max(a.cur.y + 0.3, myEyeY + 0.5), a.cur.z);

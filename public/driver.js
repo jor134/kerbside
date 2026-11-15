@@ -10,7 +10,7 @@
      - J is the model's own joints (seated driving pose, facing -z), len its limb lengths. */
 (function () {
   const { THREE } = KB;
-  const VER = '2';
+  const VER = '3';
   let model = null, loading = null;
   const log = m => window.KBLog && KBLog(m);
 

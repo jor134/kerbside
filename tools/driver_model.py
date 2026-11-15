@@ -43,7 +43,7 @@ def image(ti):
         images[s] = Image.open(io.BytesIO(B[o:o + bv['byteLength']])).convert('RGB')
     return images[s]
 
-DROP = ('Eyes', 'FACE', 'Clear', 'TearOff', 'Visor_Decal', 'VISOR_Sticker', 'Logo', 'Tag_HR')
+DROP = ('Eyes', 'FACE', 'Clear_Wing', 'Comms_Clear', 'TearOff', 'Visor_Decal', 'VISOR_Sticker', 'Logo', 'Tag_HR')
 parts = []
 def walk(ni, M):
     n = j['nodes'][ni]; W = M @ node_mat(n)
@@ -90,7 +90,7 @@ def group_of(p):
     n = p['name']
     if 'SUIT' in n: return 'suit'
     if 'GLOVES' in n: return 'gloves'
-    if 'Helmet_Visor_Helmet_Visor' in n: return 'visor'
+    if 'Helmet_Visor_Helmet_Visor' in n or 'Clear_Inlets' in n: return 'visor' # the clear vent covers close the helmet's vent holes
     if p['tex'] == 7: return 'helmet'
     return 'misc'
 def bones_of(p, P):
@@ -113,7 +113,7 @@ def qem(V, T, target):
     T2 = np.frombuffer(r, np.int32, nt * 3, o).reshape(nt, 3); o += nt * 12
     O = np.frombuffer(r, np.int32, nv, o); return V2, T2, O
 
-TARGET = {'suit': 11000, 'gloves': 3700, 'helmet': 12000, 'misc': 7000, 'visor': 2200} # about 36k: only the small hidden detail goes
+TARGET = {'suit': 11000, 'gloves': 3700, 'helmet': 20000, 'misc': 14500, 'visor': 5000} # full detail (about 52k); only exact duplicates go
 groups = {}
 for p in parts:
     g = group_of(p); J, W = bones_of(p, p['P'])
