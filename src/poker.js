@@ -243,7 +243,7 @@ export class PokerTable {
     return {
       seats: this.seats.map(s => s && { pid: s.pid, name: s.name, stack: s.stack, bet: s.bet, inHand: s.inHand, folded: s.folded, allIn: s.allIn, sitOut: s.sitOut, cards: s.inHand && !s.folded ? 2 : 0, shown: s.shown }),
       phase: this.phase, board: this.board, pot, curBet: this.curBet, minRaise: this.minRaise, toAct: this.toAct,
-      deadline: this.deadline, button: this.button, hand: this.hand, result: this.result, last: this.last, blinds: BLINDS,
+      deadline: this.deadline, left: this.toAct >= 0 ? Math.max(0, this.deadline - this.now()) : 0, button: this.button, hand: this.hand, result: this.result, last: this.last, blinds: BLINDS,
       options: this.toAct >= 0 ? this.options(this.toAct) : null
     };
   }

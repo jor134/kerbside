@@ -2882,8 +2882,8 @@ document.querySelectorAll('#lookSeg button').forEach(b => b.onclick = () => setL
 $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
-const HANG_VER = '11';
-const POKER_VER = '12';
+const HANG_VER = '12';
+const POKER_VER = '13';
 let pokerLoading = null;
 window.KBLoadPoker = function loadPoker() { // poker and race bets, for people in a hangout
   if (window.KBPoker) return Promise.resolve();

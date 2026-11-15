@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 12;
+const POKER_BUILD = 13;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -45,6 +45,7 @@ function onMsg(m) {
   if (window.KBLog && m.a === 'hole' && m.seat !== P.mySeat) KBLog(`poker: I'm in seat ${m.seat}`);
   if (window.KBLog && m.a === 'state' && (!P.state || P.state.hand !== m.s.hand || P.state.phase !== m.s.phase)) KBLog(`poker: hand ${m.s.hand} ${m.s.phase}`);
   if (m.a === 'state') {
+    if (m.s && m.s.left != null) m.s.deadline = Date.now() + m.s.left; // time left by the table's own clock, not this device's
     const prev = P.state; P.state = m.s; P.bets = m.bets || [];
     if (!prev || prev.hand !== m.s.hand || prev.toAct !== m.s.toAct) { P.pending = 0; P.pendingChips = []; P.raiseTo = 0; }
     if (m.s.toAct >= 0 && m.s.toAct === P.mySeat && (!prev || prev.toAct !== m.s.toAct)) myTurn();
@@ -66,7 +67,22 @@ function seatedNow() {
   // first time at the table in the headset: fit the seat height once you've settled in (later visits keep yours)
   if (P.mySeat >= 0 && renderer.xr.isPresenting && window.KBGarage && KBGarage.lift && KBGarage.lift() == null) setTimeout(() => { if (P.mySeat >= 0 && KBGarage.lift() == null) { KBGarage.fitHeight(); toast('Seat height fitted. Lower, Fit and Higher on the panel change it.', 5000); } }, 1500); if (P.mySeat >= 0 && P.wantBots) { const n = P.wantBots; P.wantBots = 0; addBots(n); toast('Bots joined the table: a hand starts in a few seconds.', 4000); } }
 function myTurn() {
+  chime('turn'); P.warned = false;
   if (renderer.xr.isPresenting) buzz(0.5, 60); else if (!P.open) toast('♠ Your turn at the poker table.', 3000);
+}
+// A soft two-note chime when it's your turn, and two quick ticks with ten seconds left.
+let actx = null;
+function chime(kind) {
+  try {
+    const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
+    actx = actx || new C(); if (actx.state === 'suspended') actx.resume();
+    const notes = kind === 'warn' ? [[1175, 0, 0.09], [1175, 0.16, 0.25]] : [[784, 0, 0.35], [1175, 0.13, 0.6]];
+    for (const [f, t0, t1] of notes) {
+      const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime;
+      o.type = 'sine'; o.frequency.value = f; g.gain.setValueAtTime(0.0001, t + t0); g.gain.exponentialRampToValueAtTime(kind === 'warn' ? 0.12 : 0.22, t + t0 + 0.015); g.gain.exponentialRampToValueAtTime(0.0001, t + t1);
+      o.connect(g).connect(actx.destination); o.start(t + t0); o.stop(t + t1 + 0.05);
+    }
+  } catch (e) {}
 }
 function placeMe() { // in the casino garage, sitting down moves you to your chair; standing up brings you back
   if (!window.KBGarage || !KBGarage.seatAt) return;
@@ -264,15 +280,16 @@ const CW = 0.063, CH = 0.088;
 const cardTex = new Map();
 function cardTexture(code) {
   const key = code || 'back'; if (cardTex.has(key)) return cardTex.get(key);
-  const cv = document.createElement('canvas'); cv.width = 126; cv.height = 176; const c = cv.getContext('2d');
+  // drawn at four times the old size, with anisotropic filtering, so cards stay readable lying flat across the table
+  const cv = document.createElement('canvas'); cv.width = 504; cv.height = 704; const c = cv.getContext('2d'); c.scale(4, 4);
   KB.rr(c, 2, 2, 122, 172, 12); c.fillStyle = '#fbfaf6'; c.fill();
   if (!code) { KB.rr(c, 10, 10, 106, 156, 8); c.fillStyle = '#8e1b2c'; c.fill(); c.strokeStyle = '#c9a13b'; c.lineWidth = 4; c.stroke(); c.fillStyle = '#c9a13b'; c.font = '700 44px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('K', 63, 90); }
   else {
     c.fillStyle = RED[code[1]] ? '#c8102e' : '#141414'; c.textAlign = 'center'; c.textBaseline = 'middle';
-    c.font = '700 46px "Barlow Condensed", sans-serif'; c.fillText(rankTxt(code[0]), 30, 34); c.font = '36px sans-serif'; c.fillText(SUIT[code[1]], 30, 76);
-    c.font = '78px sans-serif'; c.fillText(SUIT[code[1]], 74, 118);
+    c.font = '700 54px "Barlow Condensed", sans-serif'; c.fillText(rankTxt(code[0]), 32, 38); c.font = '40px sans-serif'; c.fillText(SUIT[code[1]], 32, 84);
+    c.font = '84px sans-serif'; c.fillText(SUIT[code[1]], 76, 124);
   }
-  const t = new THREE.CanvasTexture(cv); cardTex.set(key, t); return t;
+  const t = new THREE.CanvasTexture(cv); t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1); cardTex.set(key, t); return t;
 }
 const cardGeo = new THREE.PlaneGeometry(CW, CH);
 const CARD_T = 0.003, CARD_Y = 0.004; // thickness, and how high a card's centre sits above the table
@@ -327,7 +344,8 @@ function build3D(anchor) {
     s.trays = [100, 500, 1000].map((d, k) => { const t = new THREE.Group(); t.position.copy(at(0.9)).addScaledVector(side, -0.1 - k * 0.07); for (let j = 0; j < 6; j++) { const m = new THREE.Mesh(chipGeo, chipMat(d)); m.position.y = 0.0017 + j * 0.0035; t.add(m); } t.userData.denom = d; g.add(t); return t; });
     seats.push(s);
   }
-  const board = [0, 1, 2, 3, 4].map(k => { const c = makeCard(); c.position.set((k - 2) * 0.075, CARD_Y, -0.02); c.rotation.set(-Math.PI / 2, 0, 0); g.add(c); return c; });
+  // the five shared cards are a third bigger than the ones in your hand (jumbo cards, like a card room uses for the board)
+  const board = [0, 1, 2, 3, 4].map(k => { const c = makeCard(); c.scale.setScalar(1.35); c.position.set((k - 2) * 0.094, CARD_Y, -0.02); c.rotation.set(-Math.PI / 2, 0, 0); g.add(c); return c; });
   const pot = new THREE.Group(); pot.position.set(-0.03, 0, 0.1); g.add(pot);
   const potPlate = plate(320, 72); potPlate.position.set(0, 0.16, 0.1); potPlate.scale.set(0.3, 0.068, 1); g.add(potPlate);
   const btn = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.008, 20), KBMat({ color: 0xffffff }, 'plastic')); g.add(btn);
@@ -341,6 +359,7 @@ function build3D(anchor) {
 const vT = new THREE.Vector3();
 const BAR_HANDLE = 40, BAR_H = 520; // the bar's canvas: drag strip, then the buttons
 function update3D(frame) {
+  const eyeY = renderer.xr.isPresenting && T3 ? T3.g.worldToLocal(KB.xrHead().clone()).y : 0;
   const anchor = window.KBGarage && KBGarage.pokerAnchor && KBGarage.pokerAnchor();
   const show = !!anchor && App.env === 'garage' && App.garageLook === 'casino' && window.KBHang && KBHang.active();
   if (show !== P.wasShown && window.KBLog) { KBLog(`poker table ${show ? 'shown' : 'hidden'} (garage ${!!anchor}, place ${App.env}/${App.garageLook}, in a room ${!!(window.KBHang && KBHang.active())})`); P.wasShown = show; }
@@ -362,7 +381,7 @@ function update3D(frame) {
     });
     buildStack(S.stack, st ? st.stack : 0); buildStack(S.bet, st ? st.bet : 0);
     buildStack(S.pend, mine ? P.pending : 0);
-    S.ring.visible = mine; S.trays.forEach(t => t.visible = mine && !!opts());
+    S.ring.visible = mine; S.trays.forEach(t => t.visible = mine); // chips to fiddle with any time; they only count on your turn
     const turn = s && s.toAct === i, left = turn ? Math.max(0, (s.deadline - now) / 40000) : 0;
     const sig = st ? `${st.name}|${st.stack}|${st.folded}|${st.allIn}|${st.sitOut}|${turn}|${Math.round(left * 20)}|${mine}` : `open|${P.mySeat}`;
     drawPlate(S.plate, sig, (c, w, h) => {
@@ -375,6 +394,9 @@ function update3D(frame) {
       if (turn) { c.fillStyle = '#1c0f12'; c.fillRect(20, h - 14, (w - 40) * left, 6); }
     });
     S.plate.userData.seat = i; S.plate.userData.empty = !st;
+    // in the headset, name plates float well above your eye line (yours is hidden: you know who you are)
+    if (renderer.xr.isPresenting) { S.plate.position.y = Math.max(0.5, eyeY + 0.5); S.plate.visible = !(mine && P.mySeat >= 0); }
+    else { S.plate.position.y = 0.5; S.plate.visible = true; }
   }
   if (s) {
     T3.board.forEach((c, k) => { c.visible = k < s.board.length; if (c.visible) setCard(c, s.board[k], true); });
@@ -603,7 +625,7 @@ function handsFrame(dt, frame) {
     if (free.length === 2) { const a = free[0].userData.home, b = free[1].userData.home, mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2, half = Math.hypot(a.x - b.x, a.z - b.z) / 2;
       bothNear = Math.hypot(local.x - mx, local.z - mz) < Math.min(0.035, half * 0.6) && Math.abs(local.y - (a.y || 0)) < 0.08; }
     let trayNear = null, td = 0.06; // the closest tray within reach
-    if (o) for (const t of S.trays) { const d = Math.hypot(local.x - t.position.x, local.y - t.position.y, local.z - t.position.z); if (d < td) { td = d; trayNear = t; } }
+    if (st) for (const t of S.trays) { const d = Math.hypot(local.x - t.position.x, local.y - t.position.y, local.z - t.position.z); if (d < td) { td = d; trayNear = t; } }
     const pendNear = o && P.pending > 0 && near(S.pendAt, 0.08);
     if (cardNear || bothNear || trayNear || pendNear) nearSomething = true;
     const mine = helds.get(h.src);
@@ -722,6 +744,7 @@ function frame(dt, xrFrame) {
   if (!active) { if (wasActive) { P.state = null; P.mySeat = -1; P.hole = null; placeMe(); if (el) el.hidden = true; } wasActive = false; if (T3) T3.g.visible = false; return; }
   if (!wasActive) { wasActive = true; send({ t: 'pk', a: 'state' }); }
   if (P.state) hostSettle();
+  { const s = P.state; if (s && s.toAct >= 0 && s.toAct === P.mySeat && !P.warned && s.deadline - Date.now() < 10000) { P.warned = true; chime('warn'); if (renderer.xr.isPresenting) buzz(0.4, 40); } }
   update3D(xrFrame);
   if (renderer.xr.isPresenting && T3 && T3.bar.mesh.visible) { // hover highlight on the action bar
     let hp = null; for (const c of KB.controllers) { KB.rayFrom(c); const p = barHit(KB.raycaster); if (p) hp = p; }
