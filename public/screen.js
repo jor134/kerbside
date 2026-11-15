@@ -196,17 +196,22 @@
     for (let attempt = 1; attempt <= 4; attempt++) {
       if (S.s !== s) return;
       if (attempt > 1) { S.err = ''; S.note = `Connecting to the room browser… (try ${attempt} of 4)`; drawIdle(); }
+      // later tries keep the player's (invisible) frame on the page itself, in case a browser holds back frames placed far off-screen
+      if (attempt >= 3) div.style.cssText = 'position:fixed;right:0;bottom:0;width:320px;height:180px;opacity:0.01;pointer-events:none;z-index:-1;overflow:hidden;';
+      window.KBLog && KBLog(`room browser: connecting, try ${attempt}`);
       try {
         const hb = await Hyperbeam(div, s.embed, { adminToken: s.admin, delegateKeyboard: false, volume: S.vol, timeout: 20000, frameCb: onFrame, audioTrackCb: onAudio,
           onDisconnect: () => { if (S.hb === hb) { S.err = 'The room browser closed.'; drawIdle(); } } });
         if (S.s !== s) { hb.destroy(); return; }
         S.hb = hb; S.note = ''; drawStrip(); drawKb(); return;
       } catch (e) {
-        last = e; if (e && e.name === 'SessionTerminatedError') break; // it's gone: no point retrying
+        last = e; window.KBLog && KBLog(`room browser: try ${attempt} failed: ${e && e.name} ${e && e.message}`);
+        if (e && e.name === 'SessionTerminatedError') break; // it's gone: no point retrying
         await new Promise(r => setTimeout(r, 1500 * attempt));
       }
     }
-    S.note = ''; S.err = 'Couldn’t connect to the room browser (' + ((last && (last.name || last.message)) || last) + '). Press Stop, then Open browser to start a fresh one.'; drawIdle();
+    S.note = ''; S.failed = true; S.err = 'Couldn’t connect to the room browser (' + ((last && (last.name || last.message)) || last) + '). Press Stop, then Open browser to start a fresh one. To check the browser itself: Watch with friends, then Test the browser link.'; drawIdle();
+    if (window.KBHang && KBHang.refresh) KBHang.refresh();
   }
   function onFrame(f) {
     if (!S.hbTex) S.hbTex = new THREE.Texture();
@@ -295,7 +300,7 @@
   function set(s) {
     const key = s ? s.mode + '|' + (s.url || s.sid || s.embed) + '|' + (s.mode === 'browser' ? '' : s.by) : '';
     if (key === S.key) { S.s = s; drawStrip(); return; }
-    S.key = key; S.s = s; S.err = ''; S.ctl = null;
+    S.key = key; S.s = s; S.err = ''; S.ctl = null; S.failed = false;
     if (!s) { teardown(); drawIdle(); }
     else if (s.mode === 'link') startLink(s, false);
     else if (s.mode === 'share') startShare(s);
@@ -361,6 +366,8 @@
     const ks = kv + '|' + S.kbOpen + '|' + browsing();
     if (ks !== lastKbSig) { lastKbSig = ks; S.kbHover = kv; drawKb(); }
   }
-  window.KBScreen = { set, remote, ctl, frame, onSelect, playLink, share, stop, canShare, openBrowser, openOverlay, browsing, state: () => S.s,
+  // for checking a browser that won't connect: open the cloud browser's own page in a new tab
+  function testLink() { if (browsing() && S.s.embed) window.open(S.s.embed, '_blank', 'noopener'); }
+  window.KBScreen = { set, remote, ctl, frame, onSelect, playLink, share, stop, canShare, openBrowser, openOverlay, browsing, testLink, failed: () => !!S.failed, state: () => S.s,
     mesh: () => S.strip, meshes: () => [S.strip, S.kb, browsing() ? S.mesh : null].filter(m => m && m.visible), _S: S };
 })();
