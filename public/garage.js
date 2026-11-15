@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 23;
+const GARAGE_BUILD = 24;
 
 /* ---------------- Materials ---------------- */
 const toon = (c, gloss) => KBMat({ color: c }, gloss);
@@ -243,14 +243,39 @@ function loadSeat() {
 function buildCasino() {
   const g = new THREE.Group(); g.name = 'casino'; g.visible = false;
   const gold = toon(0xc9a13b, 'metal'), felt = toon(0x0f6b3a, 'matte'), wood = toon(0x4a2516, 'polished'), red = toon(0x9e1b2c, 'plastic'), black = toon(0x141012, 'plastic');
-  // carpet
-  const carpet = canvasTex(256, 256, (c, w) => {
-    c.fillStyle = '#5a0f1c'; c.fillRect(0, 0, w, w);
-    c.strokeStyle = '#c9a13b'; c.lineWidth = 6; c.beginPath(); c.moveTo(w / 2, 8); c.lineTo(w - 8, w / 2); c.lineTo(w / 2, w - 8); c.lineTo(8, w / 2); c.closePath(); c.stroke();
-    c.fillStyle = '#1b6f6a'; c.beginPath(); c.arc(w / 2, w / 2, 34, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#e8c33a'; for (const [x, y] of [[0, 0], [w, 0], [0, w], [w, w]]) { c.beginPath(); c.arc(x, y, 22, 0, Math.PI * 2); c.fill(); }
-  }, [W / 1.4, (Dback - Dfront) / 1.4]);
-  const cm = new THREE.Mesh(new THREE.PlaneGeometry(W - 0.2, Dback - Dfront - 0.5), new THREE.MeshLambertMaterial({ map: carpet }));
+  // carpet: a Vegas-style pattern (gold rosettes with teal and red petals on a quatrefoil lattice, little gold
+  // stars, a woven grain), drawn once at 1024 px and tiled every 1.8 m; a polished finish gives it a sheen
+  const carpet = canvasTex(1024, 1024, (c, w) => {
+    const T = w, gold = '#d4ac4a', goldD = '#8a6a26', teal = '#1f7f78', tealD = '#124c49', red = '#b3203a', base = '#4a0b17';
+    c.fillStyle = base; c.fillRect(0, 0, T, T);
+    const g0 = c.createRadialGradient(T / 2, T / 2, 40, T / 2, T / 2, T * 0.75); g0.addColorStop(0, 'rgba(120,20,40,.55)'); g0.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = g0; c.fillRect(0, 0, T, T);
+    // the lattice: overlapping circles make a quatrefoil net (drawn at every tile corner and edge so it wraps)
+    c.strokeStyle = goldD; c.lineWidth = 7;
+    for (const [x, y] of [[0, 0], [T, 0], [0, T], [T, T], [T / 2, 0], [T / 2, T], [0, T / 2], [T, T / 2]]) { c.beginPath(); c.arc(x, y, T * 0.36, 0, Math.PI * 2); c.stroke(); }
+    c.strokeStyle = 'rgba(212,172,74,.35)'; c.lineWidth = 2;
+    for (const [x, y] of [[0, 0], [T, 0], [0, T], [T, T], [T / 2, 0], [T / 2, T], [0, T / 2], [T, T / 2]]) { c.beginPath(); c.arc(x, y, T * 0.39, 0, Math.PI * 2); c.stroke(); }
+    // a rosette: eight petals, a ring and an eight-point star
+    const rosette = (x, y, r) => {
+      c.save(); c.translate(x, y);
+      for (let k = 0; k < 8; k++) { c.save(); c.rotate(k * Math.PI / 4); c.beginPath(); c.ellipse(0, -r * 0.58, r * 0.2, r * 0.42, 0, 0, Math.PI * 2); c.fillStyle = k % 2 ? red : teal; c.fill(); c.lineWidth = 4; c.strokeStyle = gold; c.stroke(); c.restore(); }
+      c.beginPath(); c.arc(0, 0, r * 0.36, 0, Math.PI * 2); c.fillStyle = tealD; c.fill(); c.lineWidth = 6; c.strokeStyle = gold; c.stroke();
+      c.beginPath(); for (let k = 0; k < 16; k++) { const a = k * Math.PI / 8, rr = k % 2 ? r * 0.12 : r * 0.3; c.lineTo(Math.sin(a) * rr, -Math.cos(a) * rr); } c.closePath(); c.fillStyle = gold; c.fill();
+      c.restore();
+    };
+    rosette(T / 2, T / 2, T * 0.2);
+    for (const [x, y] of [[0, 0], [T, 0], [0, T], [T, T]]) rosette(x, y, T * 0.13); // quarter rosettes at the corners join up across tiles
+    // diamonds on the edges, and scattered small stars
+    const diamond = (x, y, r) => { c.beginPath(); c.moveTo(x, y - r); c.lineTo(x + r * 0.6, y); c.lineTo(x, y + r); c.lineTo(x - r * 0.6, y); c.closePath(); c.fillStyle = red; c.fill(); c.lineWidth = 3; c.strokeStyle = gold; c.stroke(); };
+    for (const [x, y] of [[T / 2, 0], [T / 2, T], [0, T / 2], [T, T / 2]]) diamond(x, y, T * 0.05);
+    const star = (x, y, r) => { c.beginPath(); for (let k = 0; k < 10; k++) { const a = k * Math.PI / 5, rr = k % 2 ? r * 0.42 : r; c.lineTo(x + Math.sin(a) * rr, y - Math.cos(a) * rr); } c.closePath(); c.fillStyle = gold; c.fill(); };
+    for (const [x, y] of [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]) star(x * T, y * T, T * 0.022);
+    // woven grain
+    const img = c.getImageData(0, 0, T, T), d = img.data;
+    for (let i = 0; i < d.length; i += 4) { const px = (i / 4) % T, py = Math.floor(i / 4 / T), n = (Math.random() - 0.5) * 18 + ((px + py) % 4 < 2 ? 4 : -4); d[i] = Math.max(0, Math.min(255, d[i] + n)); d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + n)); d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + n)); }
+    c.putImageData(img, 0, 0);
+  }, [W / 1.8, (Dback - Dfront) / 1.8]);
+  carpet.anisotropy = 8; // stays crisp looking across the floor at a low angle
+  const cm = new THREE.Mesh(new THREE.PlaneGeometry(W - 0.2, Dback - Dfront - 0.5), KBMat({ map: carpet }, 'polished')); // polished: a soft sheen and a hint of reflection
   cm.rotation.x = -Math.PI / 2; cm.position.set(0, 0.012, (Dback + Dfront) / 2 + 0.2); g.add(cm);
   // neon: sign on the back wall, tubes along the walls, sign over the entrance outside
   const sign = (tex, w, h, x, y, z, ry) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })); m.position.set(x, y, z); if (ry) m.rotation.y = ry; g.add(m); return m; };
