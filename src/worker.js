@@ -801,13 +801,41 @@ export class HangRoom extends DurableObject {
     this.peers.set(id, { ws: server, name: 'Friend ' + id, color: '#9aa5ab', device: 'screen', muted: false });
     if (this.host == null || !this.peers.has(this.host)) this.host = id;
     const r = this.roster();
-    this.send(server, { t: 'welcome', you: id, host: this.host, peers: r.peers, watch: this.watch, env: this.env || null, look: this.look || 'team', screen: this.screenState() });
+    this.send(server, { t: 'welcome', you: id, host: this.host, peers: r.peers, watch: this.watch, env: this.roomEnv || null, look: this.look || 'team', screen: this.screenState() });
     this.broadcast(r, id);
     server.addEventListener('message', e => this.onMsg(id, e.data));
     const leave = () => this.leave(id);
     server.addEventListener('close', leave);
     server.addEventListener('error', leave);
     return new Response(null, { status: 101, webSocket: client });
+  }
+  // The room browser: a cloud Chrome from Hyperbeam (HYPERBEAM_KEY secret), one per room, streamed to the screen.
+  // It closes when someone puts something else on the screen, presses Stop, or the room empties; Hyperbeam also
+  // closes it by itself if nobody is connected for two minutes (in case this room is shut down first).
+  async startBrowser(id, p, startUrl) {
+    const key = this.env && this.env.HYPERBEAM_KEY;
+    if (!key) { this.send(p.ws, { t: 'toast', msg: 'The room browser isn’t switched on yet: add your Hyperbeam API key as the HYPERBEAM_KEY secret on the Worker.' }); return; }
+    if (this.hbStarting) return;
+    if (!this.hb) {
+      this.hbStarting = true;
+      const url = typeof startUrl === 'string' && /^https?:\/\//i.test(startUrl) && startUrl.length < 2000 ? startUrl : 'https://www.google.com';
+      const post = body => fetch('https://engine.hyperbeam.com/v0/vm', { method: 'POST', headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      try {
+        let r = await post({ start_url: url, kiosk: false, width: 1280, height: 720, ublock: true, timeout: { offline: 120 }, default_roles: ['control', 'cursor_data'] });
+        if (r.status === 400) r = await post({ timeout: { offline: 120 } }); // in case an option isn't accepted: the plain version
+        if (!r.ok) throw new Error('Hyperbeam said ' + r.status + (r.status === 401 ? ' (check the API key)' : r.status === 402 || r.status === 429 ? ' (out of minutes, or too many browsers open)' : ''));
+        this.hb = await r.json();
+      } catch (e) { this.hbStarting = false; this.send(p.ws, { t: 'toast', msg: 'Couldn’t start the room browser: ' + e.message + '.' }); return; }
+      this.hbStarting = false;
+      if (!this.peers.size) { this.stopBrowser(); return; }
+    }
+    this.screen = { mode: 'browser', embed: this.hb.embed_url, admin: this.hb.admin_token, by: id, name: p.name, at: Date.now() };
+    this.broadcast({ t: 'screen', s: this.screenState() });
+  }
+  stopBrowser() {
+    const hb = this.hb; if (!hb) return; this.hb = null;
+    const key = this.env && this.env.HYPERBEAM_KEY;
+    if (key && hb.session_id) fetch('https://engine.hyperbeam.com/v0/vm/' + encodeURIComponent(hb.session_id), { method: 'DELETE', headers: { Authorization: 'Bearer ' + key } }).catch(() => {});
   }
   screenState() { const s = this.screen; return s ? Object.assign({}, s, { pos: (Date.now() - s.at) / 1000 }) : null; } // pos: how far into a video it is now
   leave(id) {
@@ -825,7 +853,7 @@ export class HangRoom extends DurableObject {
     }
     if (this.host === id) this.host = this.peers.size ? this.peers.keys().next().value : null;
     if (this.screen && this.screen.mode === 'share' && this.screen.by === id) { this.screen = null; this.broadcast({ t: 'screen', s: null }); } // their shared tab went with them
-    if (!this.peers.size) { this.watch = null; this.env = null; this.screen = null; this.flush(); return; }
+    if (!this.peers.size) { this.watch = null; this.roomEnv = null; this.screen = null; this.stopBrowser(); this.flush(); return; }
     this.broadcast({ t: 'left', id });
     this.broadcast(this.roster());
   }
@@ -860,15 +888,18 @@ export class HangRoom extends DurableObject {
         break;
       case 'env':
         if (id !== this.host || (m.env !== 'garage' && m.env !== 'passthrough')) return;
-        this.env = m.env;
+        this.roomEnv = m.env; // not this.env: that's the Worker's bindings (secrets), which must never be sent to anyone
         if (m.look === 'team' || m.look === 'casino') this.look = m.look;
         this.broadcast({ t: 'env', env: m.env, look: this.look || 'team' }, id);
         break;
-      case 'screen': { // the room screen in the garage: anyone can put a shared tab or a stream link on it, or stop it
+      case 'screen': { // the room screen in the garage: anyone can put a shared tab, a stream link or the cloud browser on it, or stop it
+        if (m.a === 'ctl') { this.broadcast({ t: 'bctl', id, name: p.name }, id); return; } // who's using the browser right now
+        if (m.a === 'browser') { this.startBrowser(id, p, m.url); return; }
         if (m.a === 'stop') this.screen = null;
         else if (m.a === 'link' && typeof m.url === 'string' && /^https?:\/\//i.test(m.url) && m.url.length <= 2000) this.screen = { mode: 'link', url: m.url, by: id, name: p.name, at: Date.now() };
         else if (m.a === 'share' && typeof m.sid === 'string' && m.sid.length <= 100) this.screen = { mode: 'share', sid: m.sid, by: id, name: p.name, at: Date.now() };
         else return;
+        if (!this.screen || this.screen.mode !== 'browser') this.stopBrowser(); // something else went on: close the cloud browser
         this.broadcast({ t: 'screen', s: this.screenState() });
         break;
       }

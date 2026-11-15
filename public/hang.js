@@ -5,7 +5,7 @@
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const renderer = KB.renderer;
-const HANG_BUILD = 16;
+const HANG_BUILD = 17;
 const COLORS = ['#D2342B', '#F28A1E', '#E8C33A', '#2F8F4E', '#2BB5A0', '#2E6FD9', '#8E5BD6', '#E66BB0', '#C9CED3', '#F2F2EF'];
 
 const me = Object.assign({ name: '', color: COLORS[Math.floor(Math.random() * COLORS.length)], follow: true }, store.get('hang:me', {}));
@@ -121,6 +121,10 @@ function onMsg(m) {
     if (window.KBScreen) KBScreen.set(H.screen); UI.render();
   } else if (m.t === 'pk') {
     if (window.KBPoker) KBPoker.onMsg(m);
+  } else if (m.t === 'bctl') { // someone is using the room browser
+    if (window.KBScreen) KBScreen.ctl(m);
+  } else if (m.t === 'toast') {
+    toast(String(m.msg || '').slice(0, 300), 7000);
   } else if (m.t === 'full') {
     toast('That room is full (10 people).', 6000); leave();
   }
@@ -659,8 +663,9 @@ const UI = {
       h += `<div class="row"><button class="b ${H.muted ? 'on' : ''}" data-act="mute">${H.muted ? 'Unmute' : 'Mute'}</button><button class="b" data-act="invite">Invite</button><button class="b" data-act="leave">Leave</button></div>`;
       h += `<div class="row"><button class="b" data-act="poker">♠ Poker and race bets</button></div>`;
       const scr = H.screen, sc = window.KBScreen;
-      h += `<p class="sub" style="margin-top:8px"><b style="color:var(--chalk)">Room screen</b> (garage wall)${scr ? ' · ' + (scr.mode === 'share' ? escapeHtml(scr.name || 'A friend') + ' is sharing a tab' : 'playing a link from ' + escapeHtml(scr.name || 'a friend')) : ': nothing on'}</p>`;
-      h += `<div class="row">${sc && sc.canShare() ? `<button class="b ${H.share ? 'on' : ''}" data-act="share">${H.share ? 'Stop sharing' : 'Share a tab'}</button>` : ''}<button class="b" data-act="link">Play a link</button>${scr ? '<button class="b" data-act="scrstop">Stop</button>' : ''}</div>`;
+      h += `<p class="sub" style="margin-top:8px"><b style="color:var(--chalk)">Room screen</b> (garage wall)${scr ? ' · ' + (scr.mode === 'share' ? escapeHtml(scr.name || 'A friend') + ' is sharing a tab' : scr.mode === 'browser' ? 'the room browser is open' : 'playing a link from ' + escapeHtml(scr.name || 'a friend')) : ': nothing on'}</p>`;
+      h += `<div class="row">${scr && scr.mode === 'browser' ? '<button class="b on" data-act="usebrowser">Use the browser</button>' : '<button class="b" data-act="browser">Open browser</button>'}${sc && sc.canShare() ? `<button class="b ${H.share ? 'on' : ''}" data-act="share">${H.share ? 'Stop sharing' : 'Share a tab'}</button>` : ''}</div>`;
+      h += `<div class="row"><button class="b" data-act="link">Play a link</button>${scr ? '<button class="b" data-act="scrstop">Stop the screen</button>' : ''}</div>`;
       if (!isHost()) h += `<label class="chk"><input type="checkbox" data-act="follow" ${me.follow ? 'checked' : ''}> Follow what the host watches</label>`;
     }
     h += `<p class="sub" style="margin-top:8px">Hangout build ${HANG_BUILD}</p>`;
@@ -669,6 +674,8 @@ const UI = {
   },
   async act(a, b) {
     if (a === 'close') this.show(false);
+    else if (a === 'browser') { if (window.KBScreen) KBScreen.openBrowser(); }
+    else if (a === 'usebrowser') { if (window.KBScreen) KBScreen.openOverlay(); }
     else if (a === 'share') { if (H.share) stopShare(); else if (window.KBScreen) KBScreen.share(); }
     else if (a === 'link') { const u = prompt('Paste a direct video or live-stream link (.m3u8 or .mp4):', ''); if (u && window.KBScreen) KBScreen.playLink(u); }
     else if (a === 'scrstop') { if (window.KBScreen) KBScreen.stop(); }
