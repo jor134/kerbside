@@ -801,7 +801,7 @@ export class HangRoom extends DurableObject {
     this.peers.set(id, { ws: server, name: 'Friend ' + id, color: '#9aa5ab', device: 'screen', muted: false });
     if (this.host == null || !this.peers.has(this.host)) this.host = id;
     const r = this.roster();
-    this.send(server, { t: 'welcome', you: id, host: this.host, peers: r.peers, watch: this.watch, env: this.roomEnv || null, look: this.look || 'team', screen: this.screenState() });
+    this.send(server, { t: 'welcome', you: id, host: this.host, peers: r.peers, watch: this.watch, env: this.roomEnv || null, look: this.look || 'team', screen: this.screenState(), screenLock: this.screenLock || null });
     this.broadcast(r, id);
     server.addEventListener('message', e => this.onMsg(id, e.data));
     const leave = () => this.leave(id);
@@ -856,7 +856,7 @@ export class HangRoom extends DurableObject {
     }
     if (this.host === id) this.host = this.peers.size ? this.peers.keys().next().value : null;
     if (this.screen && this.screen.mode === 'share' && this.screen.by === id) { this.screen = null; this.broadcast({ t: 'screen', s: null }); } // their shared tab went with them
-    if (!this.peers.size) { this.watch = null; this.roomEnv = null; this.screen = null; this.stopBrowser(); this.flush(); return; }
+    if (!this.peers.size) { this.watch = null; this.roomEnv = null; this.screen = null; this.screenLock = null; this.stopBrowser(); this.flush(); return; }
     this.broadcast({ t: 'left', id });
     this.broadcast(this.roster());
   }
@@ -896,6 +896,11 @@ export class HangRoom extends DurableObject {
         this.broadcast({ t: 'env', env: m.env, look: this.look || 'team' }, id);
         break;
       case 'screen': { // the room screen in the garage: anyone can put a shared tab, a stream link or the cloud browser on it, or stop it
+        if (m.a === 'lock') { // a lock against accidental touches: while it's on, nobody can click, change or stop the screen
+          this.screenLock = m.on ? { by: id, name: p.name } : null;
+          this.broadcast({ t: 'screen', s: this.screenState(), lock: this.screenLock }); return;
+        }
+        if (this.screenLock) { this.send(p.ws, { t: 'toast', msg: `The room screen is locked${this.screenLock.name ? ' (by ' + this.screenLock.name + ')' : ''}. Unlock it under the screen first.` }); return; }
         if (m.a === 'ctl') { this.broadcast({ t: 'bctl', id, name: p.name }, id); return; } // who's using the browser right now
         if (m.a === 'browser') { this.startBrowser(id, p, m.url); return; }
         if (m.a === 'stop') this.screen = null;
@@ -903,7 +908,7 @@ export class HangRoom extends DurableObject {
         else if (m.a === 'share' && typeof m.sid === 'string' && m.sid.length <= 100) this.screen = { mode: 'share', sid: m.sid, by: id, name: p.name, at: Date.now() };
         else return;
         if (!this.screen || this.screen.mode !== 'browser') this.stopBrowser(); // something else went on: close the cloud browser
-        this.broadcast({ t: 'screen', s: this.screenState() });
+        this.broadcast({ t: 'screen', s: this.screenState(), lock: this.screenLock || null });
         break;
       }
       case 'drive': // someone set up a friends' race: bring everyone else in the hangout into it

@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 16;
+const POKER_BUILD = 17;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -327,7 +327,22 @@ function setCard(g, code, faceUp) { // lying on the felt: face up shows the card
 }
 const DENOMS = [[5000, 0xf28a1e], [1000, 0xe8c33a], [500, 0x8e5bd6], [100, 0x222428], [25, 0x2f8f4e]];
 const chipGeo = new THREE.CylinderGeometry(0.019, 0.019, 0.0034, 18), chipMats = new Map();
-const chipMat = d => { if (!chipMats.has(d)) { const m = KBMat({ color: DENOMS.find(x => x[0] === d)[1] }, 'plastic'); chipMats.set(d, m); } return chipMats.get(d); };
+// Each chip shows its value on both faces, on a ring of edge spots, like a casino chip. Rim, top, bottom.
+const chipMat = d => {
+  if (chipMats.has(d)) return chipMats.get(d);
+  const col = DENOMS.find(x => x[0] === d)[1], hex = '#' + col.toString(16).padStart(6, '0');
+  const cv = document.createElement('canvas'); cv.width = cv.height = 256; const c = cv.getContext('2d');
+  c.fillStyle = hex; c.fillRect(0, 0, 256, 256);
+  c.fillStyle = '#f4f1ea'; for (let k = 0; k < 8; k++) { c.save(); c.translate(128, 128); c.rotate(k * Math.PI / 4); c.fillRect(-14, -126, 28, 34); c.restore(); } // edge spots
+  c.beginPath(); c.arc(128, 128, 82, 0, Math.PI * 2); c.fillStyle = '#f4f1ea'; c.fill();
+  c.beginPath(); c.arc(128, 128, 74, 0, Math.PI * 2); c.fillStyle = hex; c.fill();
+  const txt = String(d), dark = d === 1000 || d === 5000; // light chips get dark numbers
+  c.fillStyle = dark ? '#1b1d20' : '#f4f1ea'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.font = `800 ${txt.length > 3 ? 54 : 70}px "Barlow Condensed", sans-serif`; c.fillText(txt, 128, 132, 132);
+  const face = new THREE.CanvasTexture(cv); face.anisotropy = 4;
+  const rim = KBMat({ color: col }, 'plastic'), top = KBMat({ map: face }, 'plastic');
+  const m = [rim, top, top]; chipMats.set(d, m); return m;
+};
 function chipsFor(amount) { const out = []; let left = Math.round(amount); for (const [d] of DENOMS) { let n = Math.floor(left / d); left -= n * d; if (n) out.push([d, n]); } if (left > 0) out.push([25, 1]); return out; }
 function buildStack(group, amount) { // chip towers, one per colour, capped so a big stack still looks tidy
   if (group.userData.amount === amount) return; group.userData.amount = amount;
@@ -353,7 +368,7 @@ function build3D(anchor) {
       cardAt: at(0.8), stackAt: at(0.86).addScaledVector(side, 0.17), betAt: at(0.55), pendAt: at(0.68), btnAt: at(0.72).addScaledVector(side, -0.15) };
     s.cards.forEach((c, k) => { c.position.copy(s.cardAt).addScaledVector(side, (k - 0.5) * 0.07); c.position.y = CARD_Y; c.rotation.set(-Math.PI / 2, 0, -s.yaw + Math.PI); g.add(c); c.userData.home = c.position.clone(); c.userData.homeRot = c.rotation.clone(); c.userData.seat = i; c.userData.k = k; });
     s.stack.position.copy(s.stackAt); s.bet.position.copy(s.betAt); s.pend.position.copy(s.pendAt);
-    s.plate.position.copy(at(1.45)); s.plate.position.y = 0.5; s.plate.scale.set(0.42, 0.16, 1);
+    s.plate.position.copy(at(1.24)).addScaledVector(new THREE.Vector3(-s.dir.z, 0, s.dir.x), 0.34); s.plate.position.y = 0.5; s.plate.scale.set(0.42, 0.16, 1); // beside the player's head (to your right as you face them), not above it
     g.add(s.stack, s.bet, s.pend, s.plate);
     // the drop circle where you put chips you're about to bet
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.075, 0.085, 32), new THREE.MeshBasicMaterial({ color: 0xc9a13b, transparent: true, opacity: 0.55 }));
@@ -422,7 +437,6 @@ function seatOf(peer) {
   return s.seats.findIndex(x => x && !(typeof x.pid === 'string' && x.pid.startsWith('bot-')) && (peer.pid ? x.pid === peer.pid : x.name === peer.name));
 }
 function update3D(frame) {
-  const eyeY = renderer.xr.isPresenting && T3 ? T3.g.worldToLocal(KB.xrHead().clone()).y : 0;
   const anchor = window.KBGarage && KBGarage.pokerAnchor && KBGarage.pokerAnchor();
   const show = !!anchor && App.env === 'garage' && App.garageLook === 'casino' && window.KBHang && KBHang.active();
   if (show !== P.wasShown && window.KBLog) { KBLog(`poker table ${show ? 'shown' : 'hidden'} (garage ${!!anchor}, place ${App.env}/${App.garageLook}, in a room ${!!(window.KBHang && KBHang.active())})`); P.wasShown = show; }
@@ -457,9 +471,8 @@ function update3D(frame) {
       if (turn) { c.fillStyle = '#1c0f12'; c.fillRect(20, h - 14, (w - 40) * left, 6); }
     });
     S.plate.userData.seat = i; S.plate.userData.empty = !st;
-    // in the headset, name plates float well above your eye line (yours is hidden: you know who you are)
-    if (renderer.xr.isPresenting) { S.plate.position.y = Math.max(0.5, eyeY + 0.5); S.plate.visible = !(mine && P.mySeat >= 0); }
-    else { S.plate.position.y = 0.5; S.plate.visible = true; }
+    // name plates sit beside each player's head; yours is hidden in the headset (you know who you are)
+    S.plate.visible = !(renderer.xr.isPresenting && mine && P.mySeat >= 0);
   }
   botBodies(s);
   if (s) {

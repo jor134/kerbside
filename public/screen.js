@@ -12,7 +12,7 @@
 (function () {
   const { THREE, App, renderer, toast } = KB;
   const S = { s: null, key: '', video: null, tex: null, hls: null, proxied: false, streams: new Map(), err: '', vol: 0.8, mute: false, mesh: null, strip: null, hits: [], hover: -1, needTap: false,
-    hb: null, hbTex: null, hbAudio: null, ctl: null, lastCtlSent: 0, kb: null, kbOpen: false, kbView: 'keys', field: '', shift: false, kbHits: [], kbHover: -1, ov: null, cursor: null, lastMove: 0 };
+    lock: null, unlockArm: 0, hb: null, hbTex: null, hbAudio: null, ctl: null, lastCtlSent: 0, kb: null, kbOpen: false, kbView: 'keys', field: '', shift: false, kbHits: [], kbHover: -1, ov: null, cursor: null, lastMove: 0 };
   try { const v = JSON.parse(localStorage.getItem('kerbside:screen') || '{}'); if (v.vol != null) S.vol = v.vol; S.mute = !!v.mute; } catch (e) {}
   const saveVol = () => { try { localStorage.setItem('kerbside:screen', JSON.stringify({ vol: S.vol, mute: S.mute })); } catch (e) {} };
   let sites = [{ name: 'Google', url: 'https://www.google.com' }, { name: 'YouTube', url: 'https://www.youtube.com' }, { name: 'Twitch', url: 'https://www.twitch.tv' }];
@@ -53,7 +53,9 @@
   function drawStrip() {
     const c = stripCv.getContext('2d'); S.hits = []; const b = (x, y, w, label, fn, hot) => button(c, S.hits, S.hover, x, y, w, 72, label, fn, hot);
     c.clearRect(0, 0, 1024, 184); rr(c, 0, 0, 1024, 184, 18); c.fillStyle = 'rgba(20,24,27,.92)'; c.fill();
-    if (browsing()) {
+    if (S.lock) { // locked: only volume, sound and unlocking work
+      c.fillStyle = '#c9a13b'; c.font = '600 30px "Barlow Condensed", sans-serif'; c.fillText(`🔒 Screen locked${S.lock.name ? ' by ' + S.lock.name : ''}, so nobody changes it by accident`, 24, 56);
+    } else if (browsing()) {
       b(12, 10, 150, '◀ Back', () => hbDo(h => h.tabs.goBack()));
       b(170, 10, 150, 'Forward ▶', () => hbDo(h => h.tabs.goForward()));
       b(328, 10, 140, '⟳ Reload', () => hbDo(h => h.tabs.reload()));
@@ -65,18 +67,20 @@
       b(324, 10, 300, 'Play copied link', playCopied);
       c.fillStyle = '#94A1A8'; c.font = '500 24px Barlow, sans-serif'; c.fillText('Or share a tab / play a link', 640, 40); c.fillText('from Watch with friends', 640, 70);
     }
-    b(12, 100, 120, 'Vol −', () => setVol(S.vol - 0.15));
-    c.fillStyle = '#94A1A8'; c.font = '600 26px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.fillText(Math.round(S.vol * 100) + '%', 170, 146); c.textAlign = 'left';
-    b(210, 100, 120, 'Vol +', () => setVol(S.vol + 0.15));
-    b(344, 100, 180, S.mute || S.needTap ? 'Sound: off' : 'Sound: on', toggleSound, S.mute || S.needTap);
-    if (S.s) b(860, 100, 152, 'Stop', stop);
-    if (browsing()) { const who = busyOther() ? `${S.ctl.name || 'A friend'} is browsing` : 'Point at the screen, pinch to click'; c.fillStyle = '#94A1A8'; c.font = '500 24px Barlow, sans-serif'; c.fillText(who, 540, 146); }
+    b(12, 100, 110, 'Vol −', () => setVol(S.vol - 0.15));
+    c.fillStyle = '#94A1A8'; c.font = '600 26px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.fillText(Math.round(S.vol * 100) + '%', 146, 146, 44); c.textAlign = 'left';
+    b(170, 100, 110, 'Vol +', () => setVol(S.vol + 0.15));
+    b(292, 100, 170, S.mute || S.needTap ? 'Sound: off' : 'Sound: on', toggleSound, S.mute || S.needTap);
+    const armed = performance.now() - S.unlockArm < 3000;
+    b(474, 100, 200, S.lock ? (armed ? 'Press again to unlock' : '🔓 Unlock') : '🔒 Lock', toggleLock, !!S.lock);
+    if (S.s && !S.lock) b(860, 100, 152, 'Stop', stop);
+    if (browsing() && !S.lock) { const who = busyOther() ? `${S.ctl.name || 'A friend'} is browsing` : 'Pinch the screen to click'; c.fillStyle = '#94A1A8'; c.font = '500 22px Barlow, sans-serif'; c.fillText(who, 686, 146, 166); }
     stripTex.needsUpdate = true;
   }
   const KEYS = [['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-'], ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '/'], ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ':', '.'], ['⇧', 'z', 'x', 'c', 'v', 'b', 'n', 'm', '@', '?', '⌫']];
   function drawKb() {
     if (!S.kb) return;
-    S.kb.visible = browsing() && S.kbOpen;
+    S.kb.visible = browsing() && S.kbOpen && !S.lock;
     const c = kbCv.getContext('2d'); S.kbHits = []; const b = (x, y, w, h, label, fn, hot) => button(c, S.kbHits, S.kbHover, x, y, w, h, label, fn, hot);
     c.clearRect(0, 0, 1024, 440); rr(c, 0, 0, 1024, 440, 18); c.fillStyle = 'rgba(20,24,27,.94)'; c.fill();
     rr(c, 12, 10, 1000, 56, 10); c.fillStyle = '#0d1114'; c.fill();
@@ -232,8 +236,8 @@
     const now = performance.now(); if (now - S.lastCtlSent > 1500 && window.KBHang) { S.lastCtlSent = now; KBHang.send({ t: 'screen', a: 'ctl' }); }
     return true;
   }
-  function hbInput(ev) { if (!S.hb || !claim()) return; try { S.hb.sendEvent(ev); } catch (e) {} }
-  function hbDo(fn) { if (!S.hb || !claim()) return; Promise.resolve().then(() => fn(S.hb)).catch(e => toast('Browser: ' + (e.message || e), 4000)); }
+  function hbInput(ev) { if (!S.hb || S.lock || !claim()) return; try { S.hb.sendEvent(ev); } catch (e) {} }
+  function hbDo(fn) { if (!S.hb || S.lock || !claim()) return; Promise.resolve().then(() => fn(S.hb)).catch(e => toast('Browser: ' + (e.message || e), 4000)); }
   function go(text) {
     text = String(text || '').trim(); if (!text) return;
     const url = /^https?:\/\//i.test(text) ? text : /^[^\s]+\.[^\s]{2,}$/.test(text) ? 'https://' + text : 'https://www.google.com/search?q=' + encodeURIComponent(text);
@@ -281,7 +285,7 @@
     const cv = d.querySelector('canvas'), inp = d.querySelector('input');
     S.ov = { d, cv };
     const pos = e => { const r = cv.getBoundingClientRect(), a = cv.width / cv.height; let w = r.width, h = r.height, ox = 0, oy = 0; if (w / h > a) { w = h * a; ox = (r.width - w) / 2; } else { h = w / a; oy = (r.height - h) / 2; } return { x: Math.max(0, Math.min(1, (e.clientX - r.left - ox) / w)), y: Math.max(0, Math.min(1, (e.clientY - r.top - oy) / h)) }; };
-    cv.addEventListener('pointermove', e => { const p = pos(e); if (S.hb && !busyOther()) try { S.hb.sendEvent({ type: 'mousemove', x: p.x, y: p.y }); } catch (er) {} });
+    cv.addEventListener('pointermove', e => { const p = pos(e); if (S.hb && !S.lock && !busyOther()) try { S.hb.sendEvent({ type: 'mousemove', x: p.x, y: p.y }); } catch (er) {} });
     cv.addEventListener('pointerdown', e => { cv.focus(); const p = pos(e); hbInput({ type: 'mousedown', x: p.x, y: p.y, button: e.button }); });
     cv.addEventListener('pointerup', e => { const p = pos(e); hbInput({ type: 'mouseup', x: p.x, y: p.y, button: e.button }); });
     cv.addEventListener('wheel', e => { e.preventDefault(); hbInput({ type: 'wheel', deltaY: e.deltaY }); }, { passive: false });
@@ -310,6 +314,12 @@
   function remote(peerId, stream) {
     S.streams.set(stream.id, stream);
     if (S.s && S.s.mode === 'share' && (S.s.sid === stream.id || S.s.by === peerId)) { S.s.sid = stream.id; startShare(S.s); }
+  }
+  function setLock(l) { S.lock = l || null; S.unlockArm = 0; if (S.lock) S.kbOpen = false; drawStrip(); drawKb(); }
+  function toggleLock() { // unlocking takes two presses, so it can't happen by accident either
+    if (!S.lock) { sendScreen({ a: 'lock', on: true }); return; }
+    if (performance.now() - S.unlockArm < 3000) { S.unlockArm = 0; sendScreen({ a: 'lock', on: false }); }
+    else { S.unlockArm = performance.now(); drawStrip(); setTimeout(drawStrip, 3100); }
   }
   function ctl(m) { S.ctl = { id: m.id, name: m.name, at: performance.now() }; drawStrip(); }
 
@@ -341,7 +351,7 @@
   function onSelect(e) {
     let h = hitOn(S.strip, e.target); if (h) { const i = pick(S.hits, 1024, 184, h); if (i >= 0) S.hits[i].fn(); return true; }
     h = hitOn(S.kb, e.target); if (h) { const i = pick(S.kbHits, 1024, 440, h); if (i >= 0) S.kbHits[i].fn(); return true; }
-    if (browsing() && S.hb) { h = hitOn(S.mesh, e.target); if (h) { const x = h.uv.x, y = 1 - h.uv.y; hbInput({ type: 'mousemove', x, y }); hbInput({ type: 'mousedown', x, y, button: 0 }); hbInput({ type: 'mouseup', x, y, button: 0 }); return true; } }
+    if (browsing() && S.hb) { h = hitOn(S.mesh, e.target); if (h && S.lock) return true; if (h) { const x = h.uv.x, y = 1 - h.uv.y; hbInput({ type: 'mousemove', x, y }); hbInput({ type: 'mousedown', x, y, button: 0 }); hbInput({ type: 'mouseup', x, y, button: 0 }); return true; } }
     return false;
   }
   let lastSig = '', lastKbSig = '';
@@ -358,16 +368,16 @@
       S.cursor.visible = !!onScreen;
       if (onScreen) {
         S.cursor.position.set((onScreen.uv.x - 0.5) * SW, (onScreen.uv.y - 0.5) * SH, 0.01);
-        const now = performance.now(); if (S.hb && !busyOther() && now - S.lastMove > 50) { S.lastMove = now; try { S.hb.sendEvent({ type: 'mousemove', x: onScreen.uv.x, y: 1 - onScreen.uv.y }); } catch (e) {} } // hovering shows menus and links without taking over
+        const now = performance.now(); if (S.hb && !S.lock && !busyOther() && now - S.lastMove > 50) { S.lastMove = now; try { S.hb.sendEvent({ type: 'mousemove', x: onScreen.uv.x, y: 1 - onScreen.uv.y }); } catch (e) {} } // hovering shows menus and links without taking over
       }
     }
-    const sig = hv + '|' + !!S.s + '|' + S.mute + '|' + S.needTap + '|' + busyOther();
+    const sig = hv + '|' + !!S.s + '|' + S.mute + '|' + S.needTap + '|' + busyOther() + '|' + !!S.lock + '|' + (performance.now() - S.unlockArm < 3000);
     if (sig !== lastSig) { lastSig = sig; S.hover = hv; drawStrip(); }
     const ks = kv + '|' + S.kbOpen + '|' + browsing();
     if (ks !== lastKbSig) { lastKbSig = ks; S.kbHover = kv; drawKb(); }
   }
   // for checking a browser that won't connect: open the cloud browser's own page in a new tab
   function testLink() { if (browsing() && S.s.embed) window.open(S.s.embed, '_blank', 'noopener'); }
-  window.KBScreen = { set, remote, ctl, frame, onSelect, playLink, share, stop, canShare, openBrowser, openOverlay, browsing, testLink, failed: () => !!S.failed, state: () => S.s,
+  window.KBScreen = { set, setLock, toggleLock, locked: () => !!S.lock, remote, ctl, frame, onSelect, playLink, share, stop, canShare, openBrowser, openOverlay, browsing, testLink, failed: () => !!S.failed, state: () => S.s,
     mesh: () => S.strip, meshes: () => [S.strip, S.kb, browsing() ? S.mesh : null].filter(m => m && m.visible), _S: S };
 })();
