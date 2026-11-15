@@ -5,7 +5,7 @@
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const renderer = KB.renderer;
-const HANG_BUILD = 15;
+const HANG_BUILD = 16;
 const COLORS = ['#D2342B', '#F28A1E', '#E8C33A', '#2F8F4E', '#2BB5A0', '#2E6FD9', '#8E5BD6', '#E66BB0', '#C9CED3', '#F2F2EF'];
 
 const me = Object.assign({ name: '', color: COLORS[Math.floor(Math.random() * COLORS.length)], follow: true }, store.get('hang:me', {}));
@@ -88,6 +88,7 @@ function onMsg(m) {
     if (m.env && !isHost()) KB.setEnv(m.env, { fromHost: true });
     if (m.look && !isHost()) KB.setLook(m.look, { fromHost: true });
     if (window.KBLoadPoker) KBLoadPoker();
+    H.screen = m.screen || null; if (window.KBScreen) KBScreen.set(H.screen);
     syncPeers(); UI.render();
     if (isHost()) { publishWatch(true); publishEnv(App.env); }
   } else if (m.t === 'roster') {
@@ -114,6 +115,10 @@ function onMsg(m) {
     }
   } else if (m.t === 'drive') { // a friend set up a race on their circuit: join it
     if (KB.joinDriveRace) KB.joinDriveRace(m.code, m.from);
+  } else if (m.t === 'screen') { // what's on the room screen (screen.js)
+    H.screen = m.s || null;
+    if (H.share && !(H.screen && H.screen.mode === 'share' && H.screen.by === H.id)) stopShare(true); // someone else put something on
+    if (window.KBScreen) KBScreen.set(H.screen); UI.render();
   } else if (m.t === 'pk') {
     if (window.KBPoker) KBPoker.onMsg(m);
   } else if (m.t === 'full') {
@@ -173,6 +178,7 @@ function makePeer(id) {
   H.pcs.set(id, st);
   if (H.mic) H.mic.getTracks().forEach(t => pc.addTrack(t, H.mic));
   else pc.addTransceiver('audio', { direction: 'recvonly' });
+  st.share = H.share ? H.share.getTracks().map(t => pc.addTrack(t, H.share)) : []; // a tab you're sharing reaches friends who join later too
   pc.onnegotiationneeded = async () => {
     try { st.making = true; await pc.setLocalDescription(); send({ t: 'sig', to: id, data: { desc: pc.localDescription } }); }
     catch (e) {} finally { st.making = false; }
@@ -180,6 +186,7 @@ function makePeer(id) {
   pc.onicecandidate = e => { if (e.candidate) send({ t: 'sig', to: id, data: { cand: e.candidate } }); };
   pc.ontrack = e => {
     const stream = e.streams && e.streams[0] ? e.streams[0] : new MediaStream([e.track]);
+    if (e.track.kind === 'video' || stream.getVideoTracks().length || (H.screen && H.screen.sid === stream.id)) { if (window.KBScreen) KBScreen.remote(id, stream); return; } // a shared tab, for the room screen
     attachAudio(id, stream);
   };
   pc.onconnectionstatechange = () => {
@@ -226,6 +233,25 @@ function peerState(id) {
   const st = H.pcs.get(id); if (!st) return 'none';
   const s = st.pc.connectionState || st.pc.iceConnectionState;
   return s === 'connected' || s === 'completed' ? 'ok' : s === 'failed' ? 'failed' : 'connecting';
+}
+
+/* ---------------- Sharing a tab to the room screen ---------------- */
+async function startShare() {
+  const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 }, height: { ideal: 720, max: 1080 } }, audio: true });
+  if (H.share) stopShare(true);
+  H.share = stream;
+  for (const st of H.pcs.values()) st.share = stream.getTracks().map(t => st.pc.addTrack(t, stream));
+  const v = stream.getVideoTracks()[0]; if (v) { try { v.contentHint = 'motion'; } catch (e) {} v.addEventListener('ended', () => stopShare()); }
+  send({ t: 'screen', a: 'share', sid: stream.id });
+  if (!stream.getAudioTracks().length) toast('Sharing the picture only: to send sound too, share a tab and tick “Share tab audio”.', 7000);
+  UI.render();
+}
+function stopShare(quiet) {
+  if (!H.share) return;
+  for (const st of H.pcs.values()) { for (const s of st.share || []) { try { st.pc.removeTrack(s); } catch (e) {} } st.share = []; }
+  H.share.getTracks().forEach(t => t.stop()); H.share = null;
+  if (!quiet) send({ t: 'screen', a: 'stop' });
+  UI.render();
 }
 
 /* ---------------- Watching together ---------------- */
@@ -632,6 +658,9 @@ const UI = {
       }).join('')}</ul>`;
       h += `<div class="row"><button class="b ${H.muted ? 'on' : ''}" data-act="mute">${H.muted ? 'Unmute' : 'Mute'}</button><button class="b" data-act="invite">Invite</button><button class="b" data-act="leave">Leave</button></div>`;
       h += `<div class="row"><button class="b" data-act="poker">♠ Poker and race bets</button></div>`;
+      const scr = H.screen, sc = window.KBScreen;
+      h += `<p class="sub" style="margin-top:8px"><b style="color:var(--chalk)">Room screen</b> (garage wall)${scr ? ' · ' + (scr.mode === 'share' ? escapeHtml(scr.name || 'A friend') + ' is sharing a tab' : 'playing a link from ' + escapeHtml(scr.name || 'a friend')) : ': nothing on'}</p>`;
+      h += `<div class="row">${sc && sc.canShare() ? `<button class="b ${H.share ? 'on' : ''}" data-act="share">${H.share ? 'Stop sharing' : 'Share a tab'}</button>` : ''}<button class="b" data-act="link">Play a link</button>${scr ? '<button class="b" data-act="scrstop">Stop</button>' : ''}</div>`;
       if (!isHost()) h += `<label class="chk"><input type="checkbox" data-act="follow" ${me.follow ? 'checked' : ''}> Follow what the host watches</label>`;
     }
     h += `<p class="sub" style="margin-top:8px">Hangout build ${HANG_BUILD}</p>`;
@@ -640,6 +669,9 @@ const UI = {
   },
   async act(a, b) {
     if (a === 'close') this.show(false);
+    else if (a === 'share') { if (H.share) stopShare(); else if (window.KBScreen) KBScreen.share(); }
+    else if (a === 'link') { const u = prompt('Paste a direct video or live-stream link (.m3u8 or .mp4):', ''); if (u && window.KBScreen) KBScreen.playLink(u); }
+    else if (a === 'scrstop') { if (window.KBScreen) KBScreen.stop(); }
     else if (a === 'poker') { if (window.KBLoadPoker) KBLoadPoker().then(() => KBPoker.open()).catch(e => toast('Poker: ' + e.message + '.', 6000)); }
     else if (a === 'color') { me.color = b.dataset.c; saveMe(); this.render(); }
     else if (a === 'create') {
@@ -723,7 +755,7 @@ async function inviteFromHeadset() {
 const Hang = {
   open(prefill) { UI.build(); if (prefill) H.pending = String(prefill).toUpperCase(); UI.show(true); },
   hangBuild: HANG_BUILD, join, leave, frame, onSelect, publishEnv, send, pid: () => pid, myId: () => H.id, invite: inviteFromHeadset, code: () => (H.joined ? H.code : ''), others: () => H.peers.filter(p => p.id !== H.id).length, name: () => myName(),
-  active() { return H.joined; },
+  active() { return H.joined; }, startShare, stopShare: () => stopShare(), sharing: () => !!H.share, shareStream: () => H.share, screen: () => H.screen,
   isHost,
   _H: H
 };

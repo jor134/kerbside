@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 18;
+const GARAGE_BUILD = 19;
 
 /* ---------------- Materials ---------------- */
 const toon = (c, gloss) => KBMat({ color: c }, gloss);
@@ -573,7 +573,7 @@ function canTeleport() {
   return !!built && built.G.visible && App.env === 'garage' && renderer.xr.isPresenting && !App.placing && !App.placingWindow
     && !(window.KBDrive && KBDrive.active) && !(spot && spot.seat != null) && !App.dragging;
 }
-function onMenu(c) { KB.rayFrom(c); return KB.raycaster.intersectObjects([KB.uiMesh, KB.chaseMesh, window.KBTut && KBTut._mesh, window.KBPoker && KBPoker.barDrag && KBPoker.barDrag() && KBPoker.barDrag().mesh].filter(m => m && m.visible), false).length > 0; }
+function onMenu(c) { KB.rayFrom(c); return KB.raycaster.intersectObjects([KB.uiMesh, KB.chaseMesh, window.KBTut && KBTut._mesh, window.KBScreen && KBScreen.mesh(), window.KBPoker && KBPoker.barDrag && KBPoker.barDrag() && KBPoker.barDrag().mesh].filter(m => m && m.visible), false).length > 0; }
 function allowedFloor(x, z) {
   if (Math.hypot(x, z) < 1.0) return false; // not onto the circuit table
   if (look_ === 'casino' && Math.hypot((x - POKER.x) / (POKER.rx + 0.45), (z - POKER.z) / (POKER.rz + 0.45)) < 1) return false; // nor the poker table
@@ -723,6 +723,6 @@ function sessionEnded() { win.placed = false; frozenYaw = null; lastAnchor.set(1
 window.KBGarage = { frame, startWindowPlacing, confirmWindow, canWindow, sessionEnded, setTeamColor, setAway, away, atPitwall, flatCam, lookBy, zoomBy, build: GARAGE_BUILD,
   setLook, look: () => look_, seatAt, seated: () => spot && spot.seat != null ? spot.seat : -1,
   pokerAnchor: () => built && built.casino.anchor, pokerGeo: POKER, seatSpot, stencil: outsideWindow,
-  roaming: () => !!(spot && spot.free && App.env === 'garage'), pickSeat, setLift, lift: () => lift, fitHeight, hoverSeat: () => (seatsShown() ? hoverSeat : -1),
+  roaming: () => !!(spot && spot.free && App.env === 'garage'), pickSeat, group: () => built && built.G, setLift, lift: () => lift, fitHeight, hoverSeat: () => (seatsShown() ? hoverSeat : -1),
   _dbg: () => ({ TR, built, SCR, OFF, look, spot, tp, tpMark }) };
 })();

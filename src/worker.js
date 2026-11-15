@@ -13,6 +13,33 @@ const TOPICS = [
 ];
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET, PUT, POST, OPTIONS' };
 
+// Video pass-through for the room screen. Only with the relay key (checked before this runs), only http(s),
+// only video, audio and stream playlists (never web pages). Stream playlists are rewritten so every piece they
+// point to comes through here too.
+async function videoProxy(request, url) {
+  let target; try { target = new URL(url.searchParams.get('u') || ''); } catch (e) { return new Response('Bad address', { status: 400, headers: CORS }); }
+  if (!/^https?:$/.test(target.protocol)) return new Response('Bad address', { status: 400, headers: CORS });
+  const h = new Headers({ 'User-Agent': 'Mozilla/5.0 (Kerbside room screen)' });
+  const range = request.headers.get('Range'); if (range) h.set('Range', range);
+  let r; try { r = await fetch(target.toString(), { headers: h, redirect: 'follow' }); } catch (e) { return new Response('Couldn’t reach that address', { status: 502, headers: CORS }); }
+  const ct = (r.headers.get('content-type') || '').toLowerCase();
+  const list = /mpegurl/.test(ct) || /\.m3u8$/i.test(target.pathname);
+  if (!list && !/^(video|audio)\/|octet-stream|mp2t|binary|mp4|application\/dash/.test(ct)) return new Response('Not a video', { status: 415, headers: CORS });
+  const out = new Headers(CORS);
+  for (const k of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control']) { const v = r.headers.get(k); if (v) out.set(k, v); }
+  out.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+  if (!list) return new Response(r.body, { status: r.status, headers: out });
+  const key = url.searchParams.get('key') || '', base = r.url || target.toString();
+  const via = u => { try { return `${url.origin}/vproxy?key=${encodeURIComponent(key)}&u=${encodeURIComponent(new URL(u, base).toString())}`; } catch (e) { return u; } };
+  const text = (await r.text()).split('\n').map(line => {
+    const t = line.trim(); if (!t) return line;
+    if (t.startsWith('#')) return line.replace(/URI="([^"]+)"/g, (m, v) => `URI="${via(v)}"`);
+    return via(t);
+  }).join('\n');
+  out.set('content-type', 'application/vnd.apple.mpegurl'); out.delete('content-length');
+  return new Response(text, { status: r.status, headers: out });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -29,6 +56,7 @@ export default {
       if (request.headers.get('Upgrade') !== 'websocket') return new Response('Expected a WebSocket upgrade', { status: 426, headers: CORS });
       return env.HANG.get(env.HANG.idFromName('hang:' + code)).fetch(request);
     }
+    if (url.pathname === '/vproxy') return videoProxy(request, url); // the room screen's stream links, for sites that don't allow other pages to play them
     if (url.pathname === '/ice') {
       return new Response(JSON.stringify(await iceServers(env)), { headers: { ...CORS, 'content-type': 'application/json', 'cache-control': 'no-store' } });
     }
@@ -773,7 +801,7 @@ export class HangRoom extends DurableObject {
     this.peers.set(id, { ws: server, name: 'Friend ' + id, color: '#9aa5ab', device: 'screen', muted: false });
     if (this.host == null || !this.peers.has(this.host)) this.host = id;
     const r = this.roster();
-    this.send(server, { t: 'welcome', you: id, host: this.host, peers: r.peers, watch: this.watch, env: this.env || null, look: this.look || 'team' });
+    this.send(server, { t: 'welcome', you: id, host: this.host, peers: r.peers, watch: this.watch, env: this.env || null, look: this.look || 'team', screen: this.screenState() });
     this.broadcast(r, id);
     server.addEventListener('message', e => this.onMsg(id, e.data));
     const leave = () => this.leave(id);
@@ -781,6 +809,7 @@ export class HangRoom extends DurableObject {
     server.addEventListener('error', leave);
     return new Response(null, { status: 101, webSocket: client });
   }
+  screenState() { const s = this.screen; return s ? Object.assign({}, s, { pos: (Date.now() - s.at) / 1000 }) : null; } // pos: how far into a video it is now
   leave(id) {
     const gone = this.peers.get(id);
     if (!this.peers.delete(id)) return;
@@ -795,7 +824,8 @@ export class HangRoom extends DurableObject {
       }, 45000));
     }
     if (this.host === id) this.host = this.peers.size ? this.peers.keys().next().value : null;
-    if (!this.peers.size) { this.watch = null; this.env = null; this.flush(); return; }
+    if (this.screen && this.screen.mode === 'share' && this.screen.by === id) { this.screen = null; this.broadcast({ t: 'screen', s: null }); } // their shared tab went with them
+    if (!this.peers.size) { this.watch = null; this.env = null; this.screen = null; this.flush(); return; }
     this.broadcast({ t: 'left', id });
     this.broadcast(this.roster());
   }
@@ -834,6 +864,14 @@ export class HangRoom extends DurableObject {
         if (m.look === 'team' || m.look === 'casino') this.look = m.look;
         this.broadcast({ t: 'env', env: m.env, look: this.look || 'team' }, id);
         break;
+      case 'screen': { // the room screen in the garage: anyone can put a shared tab or a stream link on it, or stop it
+        if (m.a === 'stop') this.screen = null;
+        else if (m.a === 'link' && typeof m.url === 'string' && /^https?:\/\//i.test(m.url) && m.url.length <= 2000) this.screen = { mode: 'link', url: m.url, by: id, name: p.name, at: Date.now() };
+        else if (m.a === 'share' && typeof m.sid === 'string' && m.sid.length <= 100) this.screen = { mode: 'share', sid: m.sid, by: id, name: p.name, at: Date.now() };
+        else return;
+        this.broadcast({ t: 'screen', s: this.screenState() });
+        break;
+      }
       case 'drive': // someone set up a friends' race: bring everyone else in the hangout into it
         if (!/^[A-Z]{4}$/.test(String(m.code || ''))) return;
         this.broadcast({ t: 'drive', code: m.code, from: p.name || 'A friend' }, id);

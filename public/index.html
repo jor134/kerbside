@@ -1013,7 +1013,7 @@ function setDrawTrack(on) {
 function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
 App.env = store.get('env', 'passthrough'); App.garageLook = store.get('garageLook', 'team'); App.ptWindow = store.get('ptWindow', false); App.ptSize = store.get('ptSize', 'M');
 let garageLoading = null;
-const GARAGE_VER = '18';
+const GARAGE_VER = '19';
 function loadGarage() {
   if (window.KBGarage) return Promise.resolve();
   return garageLoading || (garageLoading = new Promise((res, rej) => {
@@ -2237,6 +2237,7 @@ function rayFrom(c) { tmpM.identity().extractRotation(c.matrixWorld); raycaster.
 function onSelect(e) {
   const hand = e && e.target ? KB.controllers.indexOf(e.target) : -1;
   if (window.KBTut && KBTut.onSelect(e)) { KBLog(`click (hand ${hand}): tutorial card`); return; }
+  if (window.KBScreen && KBScreen.onSelect(e)) { KBLog(`click (hand ${hand}): room screen controls`); return; }
   // A glowing casino seat that's lit up ("Click to sit") wins over everything: use the seat that's
   // highlighted, whichever hand's pointer lit it, rather than re-aiming with the hand that clicked.
   const hv = window.KBGarage && KBGarage.hoverSeat ? KBGarage.hoverSeat() : -1;
@@ -2714,6 +2715,7 @@ function frameBody(time, frame) {
   safeTick('headset', () => xrBodyTick(frame, dt));
   safeTick('drag', dragTick);
   safeTick('tutorial', () => window.KBTut && KBTut.frame(dt));
+  safeTick('screen', () => window.KBScreen && KBScreen.frame(dt));
   safeTick('debug', () => debugTick(dt));
   if (window.KBDrive && KBDrive.active) { KBDrive.frame(dt, frame); return; }
   if (App.source === 'replay') Replay.tick(dt);
@@ -2862,9 +2864,10 @@ const DRIVER_VER = '3';
 window.KBLoadDriver = () => { // the racing-driver avatar model, loaded the first time someone needs one
   if (window.__kbDriverTag) return; const sc = document.createElement('script'); sc.src = 'driver.js?v=' + DRIVER_VER; sc.async = true; document.head.appendChild(sc); window.__kbDriverTag = sc;
 };
-const TUT_VER = '1';
-(function loadTutorial() { // first-visit intro and the headset tour
+const TUT_VER = '1', SCREEN_VER = '1';
+(function loadTutorial() { // first-visit intro and the headset tour; the room screen in the garage
   const sc = document.createElement('script'); sc.src = 'tutorial.js?v=' + TUT_VER; sc.async = true; document.head.appendChild(sc);
+  const s2 = document.createElement('script'); s2.src = 'screen.js?v=' + SCREEN_VER; s2.async = true; document.head.appendChild(s2);
 })();
 (function loadWeather() { // circuit weather: menu section, table sign, alerts
   const sc = document.createElement('script'); sc.src = 'forecast-panel.js?v=4'; sc.async = true; document.head.appendChild(sc);
@@ -2886,7 +2889,7 @@ document.querySelectorAll('#lookSeg button').forEach(b => b.onclick = () => setL
 $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
-const HANG_VER = '15';
+const HANG_VER = '16';
 const POKER_VER = '16';
 let pokerLoading = null;
 window.KBLoadPoker = function loadPoker() { // poker and race bets, for people in a hangout
