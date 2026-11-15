@@ -7,6 +7,19 @@
 <meta name="description" content="Race positions on a model of the circuit, in your room.">
 <meta name="theme-color" content="#20262B">
 <script>
+(function fitCanvasText() { // no text on a canvas (headset windows, signs, screens) may run off its edges: squeeze it to fit instead
+  const P = CanvasRenderingContext2D.prototype;
+  for (const name of ['fillText', 'strokeText']) {
+    const orig = P[name];
+    P[name] = function (t, x, y, maxW) {
+      const m = this.getTransform ? this.getTransform() : null, a = m && m.a ? m.a : 1, dx = m ? a * x + m.e : x, W = this.canvas.width;
+      const L = dx / a, R = (W - dx) / a, al = this.textAlign, pad = 8 / a;
+      const room = (al === 'center' ? 2 * Math.min(L, R) : al === 'right' || al === 'end' ? L : R) - pad;
+      if (room > 4 && (maxW == null || maxW > room)) maxW = room;
+      return maxW == null ? orig.call(this, t, x, y) : orig.call(this, t, x, y, maxW);
+    };
+  }
+})();
 // Recovery: open the site with ?reset to clear the offline copy and start fresh.
 if (/[?&]reset\b/.test(location.search)) {
   Promise.all([
@@ -2088,7 +2101,7 @@ function drawXRPanel() {
     const hv = App.hoverPx && App.hoverPx.x >= x && App.hoverPx.x <= x + w && App.hoverPx.y >= y && App.hoverPx.y <= y + 62;
     rr(c, x, y, w, 62, 12); c.fillStyle = on ? '#D2342B' : (hv ? '#46525A' : '#2F383E'); c.fill();
     if (hv) { c.strokeStyle = '#E9E6DF'; c.lineWidth = 3; c.stroke(); }
-    c.fillStyle = '#E9E6DF'; c.font = '600 27px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.fillText(label, x + w / 2, y + 41); c.textAlign = 'left';
+    c.fillStyle = '#E9E6DF'; c.font = '600 27px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.fillText(label, x + w / 2, y + 41, w - 14); c.textAlign = 'left';
     hits.push({ x, y, w, h: 62, fn });
   };
   let x = 32; const y1 = 534, y2 = 620;
@@ -2875,7 +2888,7 @@ const DRIVER_VER = '3';
 window.KBLoadDriver = () => { // the racing-driver avatar model, loaded the first time someone needs one
   if (window.__kbDriverTag) return; const sc = document.createElement('script'); sc.src = 'driver.js?v=' + DRIVER_VER; sc.async = true; document.head.appendChild(sc); window.__kbDriverTag = sc;
 };
-const TUT_VER = '1', SCREEN_VER = '5';
+const TUT_VER = '2', SCREEN_VER = '6';
 (function loadTutorial() { // first-visit intro and the headset tour; the room screen in the garage
   const sc = document.createElement('script'); sc.src = 'tutorial.js?v=' + TUT_VER; sc.async = true; document.head.appendChild(sc);
   const s2 = document.createElement('script'); s2.src = 'screen.js?v=' + SCREEN_VER; s2.async = true; document.head.appendChild(s2);
@@ -2883,7 +2896,7 @@ const TUT_VER = '1', SCREEN_VER = '5';
 (function loadWeather() { // circuit weather: menu section, table sign, alerts
   const sc = document.createElement('script'); sc.src = 'forecast-panel.js?v=4'; sc.async = true; document.head.appendChild(sc);
 })();
-const DRIVE_VER = '11'; // bump whenever drive.js changes, so devices don't keep an old copy
+const DRIVE_VER = '12'; // bump whenever drive.js changes, so devices don't keep an old copy
 let driveLoading = null;
 function loadDrive() {
   if (window.KBDrive) return Promise.resolve();
@@ -2900,8 +2913,8 @@ document.querySelectorAll('#lookSeg button').forEach(b => b.onclick = () => setL
 $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
-const HANG_VER = '18';
-const POKER_VER = '16';
+const HANG_VER = '19';
+const POKER_VER = '17';
 let pokerLoading = null;
 window.KBLoadPoker = function loadPoker() { // poker and race bets, for people in a hangout
   if (window.KBPoker) return Promise.resolve();

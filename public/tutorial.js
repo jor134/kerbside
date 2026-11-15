@@ -110,7 +110,7 @@
       const i = hits.length, hot = T.hover === i;
       rr(c, x, yb, w, 66, 12); c.fillStyle = kind === 'go' ? (hot ? '#ff4a3d' : '#D2342B') : hot ? '#3a454c' : 'rgba(255,255,255,.07)'; c.fill();
       c.lineWidth = 2; c.strokeStyle = kind === 'go' ? '#D2342B' : '#4b575e'; c.stroke();
-      c.fillStyle = '#E9E6DF'; c.font = '600 28px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.fillText(label, x + w / 2, yb + 43); c.textAlign = 'left';
+      c.fillStyle = '#E9E6DF'; c.font = '600 28px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.fillText(label, x + w / 2, yb + 43, w - 14); c.textAlign = 'left';
       hits.push({ x, y: yb, w, h: 66, fn });
     };
     btn(28, 130, 'Back', () => go(T.i - 1));

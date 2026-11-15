@@ -549,7 +549,7 @@ function updateBar(frame) {
     KB.rr(c, x, y, w, h, 12); c.fillStyle = kind === 'go' ? '#c9a13b' : kind === 'no' ? '#4a1420' : kind === 'off' ? '#1c1418' : '#2a1b20'; c.fill();
     c.strokeStyle = hov ? '#f2b233' : '#6b2b3a'; c.lineWidth = hov ? 5 : 3; c.stroke();
     c.fillStyle = kind === 'go' ? '#1c0f12' : kind === 'off' ? '#6f6266' : '#E9E6DF'; c.font = '700 34px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
-    c.fillText(label, x + w / 2, y + h / 2 + 2); if (fn && kind !== 'off') hits.push({ x, y, w, h, fn });
+    c.fillText(label, x + w / 2, y + h / 2 + 2, w - 14); if (fn && kind !== 'off') hits.push({ x, y, w, h, fn });
   };
   c.textAlign = 'left'; c.textBaseline = 'alphabetic';
   btn(24, 20, 150, 56, 'Table', () => P.xrTab = 'act', P.xrTab === 'act' ? 'go' : ''); btn(186, 20, 150, 56, 'Race bets', () => P.xrTab = 'bets', P.xrTab === 'bets' ? 'go' : '');

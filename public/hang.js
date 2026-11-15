@@ -569,7 +569,7 @@ function drawXrPanel() {
   const btn = (x, y, w, label, on, fn) => {
     const hv = pHover && pHover.x >= x && pHover.x <= x + w && pHover.y >= y && pHover.y <= y + 56;
     KB.rr(c, x, y, w, 56, 12); c.fillStyle = on ? '#D2342B' : hv ? '#46525A' : '#2F383E'; c.fill();
-    c.fillStyle = '#E9E6DF'; c.font = '600 26px "Barlow Condensed"'; c.textAlign = 'center'; c.fillText(label, x + w / 2, y + 37); c.textAlign = 'left';
+    c.fillStyle = '#E9E6DF'; c.font = '600 26px "Barlow Condensed"'; c.textAlign = 'center'; c.fillText(label, x + w / 2, y + 37, w - 14); c.textAlign = 'left';
     hits.push({ x, y, w, h: 56, fn });
   };
   btn(400, 74, 216, H.muted ? 'Unmute' : 'Mute', H.muted, () => setMuted(!H.muted));

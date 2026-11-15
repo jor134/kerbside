@@ -47,7 +47,7 @@
   function wrapLines(c, text, w) { const out = []; let line = ''; for (const word of text.split(' ')) { const t = line ? line + ' ' + word : word; if (c.measureText(t).width > w && line) { out.push(line); line = word; } else line = t; } if (line) out.push(line); return out; }
   function button(c, hits, hover, x, y, w, h, label, fn, hot) {
     const i = hits.length; rr(c, x, y, w, h, 12); c.fillStyle = hover === i ? '#3a454c' : hot ? '#D2342B' : 'rgba(255,255,255,.08)'; c.fill();
-    c.fillStyle = '#E9E6DF'; c.font = '600 28px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.fillText(label, x + w / 2, y + h / 2 + 10); c.textAlign = 'left';
+    c.fillStyle = '#E9E6DF'; c.font = '600 28px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.fillText(label, x + w / 2, y + h / 2 + 10, w - 14); c.textAlign = 'left';
     hits.push({ x, y, w, h, fn });
   }
   function drawStrip() {
@@ -105,14 +105,14 @@
   }
   function attach() {
     const G = window.KBGarage && KBGarage.group && KBGarage.group(); if (!G || S.mesh) return;
-    const g = new THREE.Group(); g.position.set(4.3, 2.62, 2.85); g.rotation.y = -Math.PI / 2; // right wall, above the tool chests and beside the car, facing into the garage
+    const g = new THREE.Group(); g.position.set(4.3, 3.0, 2.85); g.rotation.y = -Math.PI / 2; // right wall, above the tool chests and beside the car, facing into the garage
     const frame = new THREE.Mesh(new THREE.BoxGeometry(SW + 0.16, SH + 0.16, 0.06), KBMat({ color: 0x111417 }, 'plastic')); frame.position.z = -0.035; g.add(frame);
     S.mesh = new THREE.Mesh(new THREE.PlaneGeometry(SW, SH), scrMat); g.add(S.mesh);
     S.strip = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 2.4 * 184 / 1024), new THREE.MeshBasicMaterial({ map: stripTex, transparent: true, toneMapped: false }));
-    S.strip.position.set(0, -SH / 2 - 0.3, 0.02); g.add(S.strip);
-    // the keyboard leans out from the wall below the controls, so it's easier to reach from the floor
+    S.strip.position.set(0, -SH / 2 - 0.25, 0.02); g.add(S.strip); // bottom edge about 1.3 m up: clear of the tool chests (1.05 m)
+    // the keyboard stands out from the wall, in front of the tool chests, tilted up towards you
     S.kb = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 1.6 * 440 / 1024), new THREE.MeshBasicMaterial({ map: kbTex, transparent: true, toneMapped: false }));
-    S.kb.position.set(0, -SH / 2 - 0.95, 0.35); S.kb.rotation.x = -0.5; S.kb.visible = false; g.add(S.kb);
+    S.kb.position.set(0, -SH / 2 - 1.05, 0.95); S.kb.rotation.x = -0.6; S.kb.visible = false; g.add(S.kb); // out in front of the tool chests, below the controls
     S.cursor = new THREE.Mesh(new THREE.RingGeometry(0.012, 0.022, 20), new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false, depthTest: false })); S.cursor.visible = false; S.cursor.renderOrder = 5; g.add(S.cursor);
     G.add(g); S.group = g; drawIdle(); drawStrip(); drawKb();
   }

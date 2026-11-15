@@ -995,7 +995,7 @@ function drawXrMenu() {
     const hv = xmHover && xmHover.x >= x && xmHover.x <= x + w && xmHover.y >= y && xmHover.y <= y + 64;
     KB.rr(c, x, y, w, 64, 12); c.fillStyle = on ? '#D2342B' : hv ? '#46525A' : '#2F383E'; c.fill();
     if (hv) { c.strokeStyle = '#E9E6DF'; c.lineWidth = 3; c.stroke(); }
-    c.fillStyle = '#E9E6DF'; c.font = '600 28px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.fillText(label, x + w / 2, y + 43); c.textAlign = 'left';
+    c.fillStyle = '#E9E6DF'; c.font = '600 28px "Barlow Condensed", sans-serif'; c.textAlign = 'center'; c.fillText(label, x + w / 2, y + 43, w - 14); c.textAlign = 'left';
     hits.push({ x, y, w, h: 64, fn });
   };
   if (D.state === 'results' && D.results) {
