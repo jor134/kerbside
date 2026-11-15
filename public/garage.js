@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 22;
+const GARAGE_BUILD = 23;
 
 /* ---------------- Materials ---------------- */
 const toon = (c, gloss) => KBMat({ color: c }, gloss);
@@ -211,7 +211,7 @@ function bake(G, keep) {
 /* ---------------- Casino look ---------------- */
 // Same garage, dressed for a night in Vegas: patterned carpet, burgundy walls, gold trim, neon, chandeliers,
 // slot machines and a poker table at the back. The host's choice applies to everyone in a hangout.
-const POKER = { x: -1.0, z: 3.0, top: 0.78, rx: 0.68, rz: 1.15 }; // poker table centre, felt height and size: the long way runs front to back, so more chairs see the room screen
+const POKER = { x: -1.2, z: 3.1, top: 0.78, rx: 0.6, rz: 1.2 }; // poker table centre, felt height and size: the long way runs front to back, so more chairs see the room screen
 const CHAIR_R = 0.5; // chairs sit this far beyond the felt's edge
 const CASINO = { inWall: 0x4a1420, inBack: 0x3a0f19, ceil: 0x1a0d10, glow: 0xffd27a, team: 0xc9a13b };
 const SAVED = { inWall: 0x353d43, inBack: 0x2a3136, ceil: 0x22282c, glow: 0xf4f6f8 };
@@ -226,7 +226,7 @@ function neonText(text, color, w, h) {
 // the racing-seat model: positions, normals and baked colours, one mesh (read here: no loader needed)
 let seatModel = null;
 function loadSeat() {
-  if (!seatModel) seatModel = fetch('models/casino/seat.glb?v=1').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); }).then(buf => {
+  if (!seatModel) seatModel = fetch('models/casino/seat.glb?v=2').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); }).then(buf => {
     const dv = new DataView(buf), jl = dv.getUint32(12, true), j = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jl))), bin = 20 + jl + 8;
     const read = i => { const a = j.accessors[i], v = j.bufferViews[a.bufferView], o = bin + (v.byteOffset || 0), n = a.count * { SCALAR: 1, VEC3: 3 }[a.type];
       const T = { 5126: Float32Array, 5125: Uint32Array, 5123: Uint16Array, 5121: Uint8Array }[a.componentType]; return new T(buf.slice(o, o + n * T.BYTES_PER_ELEMENT)); };

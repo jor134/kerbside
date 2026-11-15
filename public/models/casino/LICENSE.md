@@ -5,4 +5,4 @@
 licensed under **CC BY-NC 4.0** (http://creativecommons.org/licenses/by-nc/4.0/): non-commercial use only, with credit.
 
 Changes (tools/seat_model.py): recoloured to the casino (red bolsters, black centre, gold harness, dark chrome rails)
-with the textures baked into vertex colours, turned and scaled to the app's chairs, and simplified to about 9k triangles.
+with the textures baked into vertex colours, turned and scaled to the app's chairs, and simplified to about 24k triangles.

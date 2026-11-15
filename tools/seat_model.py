@@ -2,13 +2,13 @@
 # (public/models/casino/seat.glb), recoloured to the casino: red bolsters, black centre, gold harness,
 # dark chrome rails. Faces +z (the way the app's chairs face), the cushion's middle at the origin, ~1.4 m tall.
 # Each part's texture is baked into vertex colours (its light and dark kept, its hue replaced), then the whole
-# seat is simplified with quadric edge collapses (tools/qem.c `keep` mode, so colours carry across).
+# seat is lightly simplified (to ~24k triangles) with quadric edge collapses (tools/qem.c `keep` mode, so colours carry across).
 # usage: gcc -O2 -o /tmp/qem tools/qem.c -lm && python3 tools/seat_model.py seat_src.glb public/models/casino/seat.glb
 import json, struct, sys, io, os, subprocess, tempfile
 import numpy as np
 from PIL import Image
 
-src, dst = sys.argv[1], sys.argv[2]; QEM = '/tmp/qem'; TARGET = 9000; SCALE = 0.55; LIFT = 0.06
+src, dst = sys.argv[1], sys.argv[2]; QEM = '/tmp/qem'; TARGET = 24000; SCALE = 0.55; LIFT = 0.06
 b = open(src, 'rb').read(); L = struct.unpack('<I', b[12:16])[0]; j = json.loads(b[20:20 + L]); B = b[20 + L + 8:]
 def acc(i):
     a = j['accessors'][i]; bv = j['bufferViews'][a['bufferView']]
@@ -64,7 +64,7 @@ P = np.vstack(P_all); N = np.vstack(N_all); C = np.vstack(C_all); I = np.vstack(
 # the source faces +x with its cushion around x 0.35: turn it to face +z, centre the cushion, scale, lift onto a plinth
 P = np.c_[-P[:, 2], P[:, 1], P[:, 0]]; N = np.c_[-N[:, 2], N[:, 1], N[:, 0]]
 P[:, 2] -= 0.35; P *= SCALE; P[:, 1] += LIFT
-key = np.c_[np.round(P / 0.0004), np.round(C * 24)].astype(np.int64)
+key = np.round(P / 0.0004).astype(np.int64) # weld by position only: splitting at colour edges let the two sides simplify apart and open cracks
 _, first, inv = np.unique(key, axis=0, return_index=True, return_inverse=True); inv = inv.reshape(-1)
 I2 = inv[I]; I2 = I2[(I2[:, 0] != I2[:, 1]) & (I2[:, 1] != I2[:, 2]) & (I2[:, 0] != I2[:, 2])]
 s = np.sort(I2, 1); _, f = np.unique(s, axis=0, return_index=True); I2 = I2[np.sort(f)]
