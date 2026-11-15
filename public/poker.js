@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 14;
+const POKER_BUILD = 15;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -72,6 +72,24 @@ function myTurn() {
 }
 // A soft two-note chime when it's your turn, and two quick ticks with ten seconds left.
 let actx = null;
+// Two knuckle raps on the felt: a short thud (low sine dropping in pitch) with a little wood-like click on top.
+function knockSound() {
+  try {
+    const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
+    actx = actx || new C(); if (actx.state === 'suspended') actx.resume();
+    const t0 = actx.currentTime;
+    for (const dt of [0, 0.12]) {
+      const t = t0 + dt, o = actx.createOscillator(), g = actx.createGain();
+      o.type = 'sine'; o.frequency.setValueAtTime(190, t); o.frequency.exponentialRampToValueAtTime(70, t + 0.09);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.55, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+      o.connect(g).connect(actx.destination); o.start(t); o.stop(t + 0.14);
+      const n = actx.createBufferSource(), buf = actx.createBuffer(1, Math.floor(actx.sampleRate * 0.03), actx.sampleRate), d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3);
+      const f = actx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 900; f.Q.value = 1.2;
+      const ng = actx.createGain(); ng.gain.value = 0.35; n.buffer = buf; n.connect(f).connect(ng).connect(actx.destination); n.start(t);
+    }
+  } catch (e) {}
+}
 function chime(kind) {
   try {
     const C = window.AudioContext || window.webkitAudioContext; if (!C) return;
@@ -755,6 +773,7 @@ function dropHeld(src) {
   if (src == null || src === true) [...helds.keys()].forEach(drop); else drop(src);
 }
 function knock() { // check, or confirm the chips in the circle as a call or a bet
+  knockSound();
   const o = opts(); if (!o) return;
   const st = me(), put = P.pending;
   buzz(0.5, 30);

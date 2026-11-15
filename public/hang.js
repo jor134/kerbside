@@ -5,7 +5,7 @@
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, $ = KB.$, store = KB.store, toast = KB.toast;
 const renderer = KB.renderer;
-const HANG_BUILD = 13;
+const HANG_BUILD = 14;
 const COLORS = ['#D2342B', '#F28A1E', '#E8C33A', '#2F8F4E', '#2BB5A0', '#2E6FD9', '#8E5BD6', '#E66BB0', '#C9CED3', '#F2F2EF'];
 
 const me = Object.assign({ name: '', color: COLORS[Math.floor(Math.random() * COLORS.length)], follow: true }, store.get('hang:me', {}));
@@ -477,7 +477,7 @@ function poseDriver(a, d, T, fx, fz, dt) {
 }
 function updateAvatars(dt) {
   const T = tableFrame(), driving = window.KBDrive && KBDrive.active;
-  const show = T && App.view === 'tabletop' && !driving && App.track;
+  const show = T && App.view === 'tabletop' && !driving; // with or without a race loaded (the casino has none)
   const myEyeY = renderer.xr.isPresenting ? KB.xrHead().y : -1e9;
   for (const p of H.peers) {
     if (p.id === H.id) continue;

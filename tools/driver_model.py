@@ -3,7 +3,7 @@
 #  - Parts that can't be seen or carry brand marks are dropped (face and eyes inside the helmet, clear
 #    covers, tear-offs, the visor decal and stickers, logo patch, tag).
 #  - Five materials: suit, gloves and helmet keep their (white) textures so each person's colour tints them;
-#    everything else (HANS, straps, padding, balaclava) is baked to vertex colours; the visor is dark glass.
+#    everything else (HANS, straps, padding, balaclava) is baked to vertex colours; the visor is dark glass. All drawn double-sided, like the source.
 #  - Each material group is simplified with quadric edge collapses that keep original vertices (tools/qem.c
 #    `keep` mode), so texture coordinates, normals and skin weights carry across.
 #  - Skinned to 15 bones (pelvis, chest, head, and upper arm / forearm / hand / thigh / shin / foot per side)
@@ -113,7 +113,7 @@ def qem(V, T, target):
     T2 = np.frombuffer(r, np.int32, nt * 3, o).reshape(nt, 3); o += nt * 12
     O = np.frombuffer(r, np.int32, nv, o); return V2, T2, O
 
-TARGET = {'suit': 6000, 'gloves': 1800, 'helmet': 5200, 'misc': 2600, 'visor': 900}
+TARGET = {'suit': 11000, 'gloves': 3700, 'helmet': 12000, 'misc': 7000, 'visor': 2200} # about 36k: only the small hidden detail goes
 groups = {}
 for p in parts:
     g = group_of(p); J, W = bones_of(p, p['P'])

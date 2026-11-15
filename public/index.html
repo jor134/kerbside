@@ -2858,7 +2858,7 @@ window.KB = {
   layoutModel, rebuildModelTrack, positionPanels, xrHead, xrForward, enterXR, placementTick, placeAtReticle,
   pokerFromHeadset, inviteFromHeadset, uiMesh, chaseMesh, controllers, applyTrackVis, showSource, setEnv, setLook, setGhostPost, rayFrom, raycaster, drawXRPanel, getSessions: () => sessions
 };
-const DRIVER_VER = '1';
+const DRIVER_VER = '2';
 window.KBLoadDriver = () => { // the racing-driver avatar model, loaded the first time someone needs one
   if (window.__kbDriverTag) return; const sc = document.createElement('script'); sc.src = 'driver.js?v=' + DRIVER_VER; sc.async = true; document.head.appendChild(sc); window.__kbDriverTag = sc;
 };
@@ -2886,8 +2886,8 @@ document.querySelectorAll('#lookSeg button').forEach(b => b.onclick = () => setL
 $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
-const HANG_VER = '13';
-const POKER_VER = '14';
+const HANG_VER = '14';
+const POKER_VER = '15';
 let pokerLoading = null;
 window.KBLoadPoker = function loadPoker() { // poker and race bets, for people in a hangout
   if (window.KBPoker) return Promise.resolve();

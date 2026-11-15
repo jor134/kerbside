@@ -10,7 +10,7 @@
      - J is the model's own joints (seated driving pose, facing -z), len its limb lengths. */
 (function () {
   const { THREE } = KB;
-  const VER = '1';
+  const VER = '2';
   let model = null, loading = null;
   const log = m => window.KBLog && KBLog(m);
 
@@ -85,7 +85,7 @@
       if (p.name === 'visor') mat = KBMat({ color: 0x14181b, transparent: true, opacity: 0.9 }, 'glass');
       else if (p.name === 'misc') mat = KBMat({ vertexColors: true }, 'satin');
       else mat = KBMat({ map: p.map, color: p.name === 'suit' ? col : light }, p.name === 'helmet' ? 'paint' : 'satin');
-      mat.skinning = true; mats[p.name] = mat;
+      mat.skinning = true; mat.side = THREE.DoubleSide; mats[p.name] = mat; // the source model is double-sided throughout
       const mesh = new THREE.SkinnedMesh(p.geo, mat); mesh.frustumCulled = false; mesh.bind(skeleton, new THREE.Matrix4()); g.add(mesh);
     }
     const R = new THREE.Matrix4();
