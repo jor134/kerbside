@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 19;
+const GARAGE_BUILD = 20;
 
 /* ---------------- Materials ---------------- */
 const toon = (c, gloss) => KBMat({ color: c }, gloss);
@@ -75,18 +75,18 @@ function build() {
   car.add(new THREE.Mesh(KB.CarGeo.body, teamMat), new THREE.Mesh(KB.CarGeo.dark, garageDark));
   car.position.set(2.6, 0.22, -1.6); car.rotation.y = Math.PI; G.add(car);
   box(G, 0.5, 0.2, 0.3, 2.6, 0.1, -1.6 + 2.6, M.steel); box(G, 0.5, 0.2, 0.3, 2.6, 0.1, -1.6 - 2.3, M.steel);
-  // tool chests along the left wall
-  for (const z of [0.4, 2.0, 3.6]) {
-    box(G, 0.62, 1.0, 1.4, -W / 2 + 0.45, 0.5, z, teamMat);
-    for (let k = 0; k < 4; k++) box(G, 0.01, 0.02, 1.2, -W / 2 + 0.765, 0.2 + k * 0.22, z, M.dark);
-    box(G, 0.66, 0.04, 1.44, -W / 2 + 0.45, 1.02, z, M.dark);
+  // tool chests along the right wall, beside the car and under the room screen (screen.js)
+  for (const z of [1.4, 2.85, 4.3]) {
+    box(G, 0.62, 1.0, 1.4, W / 2 - 0.45, 0.5, z, teamMat);
+    for (let k = 0; k < 4; k++) box(G, 0.01, 0.02, 1.2, W / 2 - 0.765, 0.2 + k * 0.22, z, M.dark);
+    box(G, 0.66, 0.04, 1.44, W / 2 - 0.45, 1.02, z, M.dark);
   }
   // wheel guns and a tablet stand next to the chests
-  cyl(G, 0.05, 0.4, -W / 2 + 0.45, 1.25, 1.2, M.steel, 'z');
-  // tyre racks along the right wall: soft, medium and hard sets
+  cyl(G, 0.05, 0.4, W / 2 - 0.45, 1.25, 2.1, M.steel, 'z');
+  // tyre racks along the left wall: soft, medium and hard sets
   const bands = [0xe8483b, 0xf2c84b, 0xe9e6df];
-  box(G, 0.9, 0.06, 3.2, W / 2 - 0.6, 1.7, 3.6, M.steel);
-  for (let s = 0; s < 3; s++) for (let k = 0; k < 4; k++) tyre(G, W / 2 - 0.6, 0.18 + k * 0.37, 2.4 + s * 0.95, bands[s]);
+  box(G, 0.9, 0.06, 3.2, -W / 2 + 0.6, 1.7, 3.6, M.steel);
+  for (let s = 0; s < 3; s++) for (let k = 0; k < 4; k++) tyre(G, -W / 2 + 0.6, 0.18 + k * 0.37, 2.4 + s * 0.95, bands[s]);
   // pit lane, pit wall, track, grass and a grandstand out front, long enough to watch cars come and go
   const L = STRAIGHT;
   box(G, L, 0.2, 10, 0, -0.1, Dfront - 5, M.asphalt);

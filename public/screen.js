@@ -1,4 +1,4 @@
-/* The room screen: a cinema-sized screen on the garage's left wall that everyone in a room sees and hears.
+/* The room screen: a cinema-sized screen on the garage's right wall that everyone in a room sees and hears.
    Anyone in the room can put something on it, two ways:
    - Share a tab (from a computer): the picture and sound of a browser tab go to everyone over the room's own
      voice connections (hang.js does the sending). Copy-protected sites (F1 TV, Netflix...) usually share as black.
@@ -50,7 +50,7 @@
   }
   function attach() {
     const G = window.KBGarage && KBGarage.group && KBGarage.group(); if (!G || S.mesh) return;
-    const g = new THREE.Group(); g.position.set(-4.33, 2.62, 1.6); g.rotation.y = Math.PI / 2; // left wall, above the tool chests, facing into the garage
+    const g = new THREE.Group(); g.position.set(4.3, 2.62, 2.85); g.rotation.y = -Math.PI / 2; // right wall, above the tool chests and beside the car, facing into the garage
     const frame = new THREE.Mesh(new THREE.BoxGeometry(SW + 0.16, SH + 0.16, 0.06), KBMat({ color: 0x111417 }, 'plastic')); frame.position.z = -0.035; g.add(frame);
     S.mesh = new THREE.Mesh(new THREE.PlaneGeometry(SW, SH), scrMat); g.add(S.mesh);
     S.strip = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 2.4 * 96 / 1024), new THREE.MeshBasicMaterial({ map: stripTex, transparent: true, toneMapped: false }));

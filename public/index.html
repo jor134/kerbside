@@ -1013,7 +1013,7 @@ function setDrawTrack(on) {
 function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
 App.env = store.get('env', 'passthrough'); App.garageLook = store.get('garageLook', 'team'); App.ptWindow = store.get('ptWindow', false); App.ptSize = store.get('ptSize', 'M');
 let garageLoading = null;
-const GARAGE_VER = '19';
+const GARAGE_VER = '20';
 function loadGarage() {
   if (window.KBGarage) return Promise.resolve();
   return garageLoading || (garageLoading = new Promise((res, rej) => {
@@ -2864,7 +2864,7 @@ const DRIVER_VER = '3';
 window.KBLoadDriver = () => { // the racing-driver avatar model, loaded the first time someone needs one
   if (window.__kbDriverTag) return; const sc = document.createElement('script'); sc.src = 'driver.js?v=' + DRIVER_VER; sc.async = true; document.head.appendChild(sc); window.__kbDriverTag = sc;
 };
-const TUT_VER = '1', SCREEN_VER = '1';
+const TUT_VER = '1', SCREEN_VER = '2';
 (function loadTutorial() { // first-visit intro and the headset tour; the room screen in the garage
   const sc = document.createElement('script'); sc.src = 'tutorial.js?v=' + TUT_VER; sc.async = true; document.head.appendChild(sc);
   const s2 = document.createElement('script'); s2.src = 'screen.js?v=' + SCREEN_VER; s2.async = true; document.head.appendChild(s2);
