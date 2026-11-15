@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 17;
+const POKER_BUILD = 18;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -368,7 +368,7 @@ function build3D(anchor) {
       cardAt: at(0.8), stackAt: at(0.86).addScaledVector(side, 0.17), betAt: at(0.55), pendAt: at(0.68), btnAt: at(0.72).addScaledVector(side, -0.15) };
     s.cards.forEach((c, k) => { c.position.copy(s.cardAt).addScaledVector(side, (k - 0.5) * 0.07); c.position.y = CARD_Y; c.rotation.set(-Math.PI / 2, 0, -s.yaw + Math.PI); g.add(c); c.userData.home = c.position.clone(); c.userData.homeRot = c.rotation.clone(); c.userData.seat = i; c.userData.k = k; });
     s.stack.position.copy(s.stackAt); s.bet.position.copy(s.betAt); s.pend.position.copy(s.pendAt);
-    s.plate.position.copy(at(1.24)).addScaledVector(new THREE.Vector3(-s.dir.z, 0, s.dir.x), 0.34); s.plate.position.y = 0.5; s.plate.scale.set(0.42, 0.16, 1); // beside the player's head (to your right as you face them), not above it
+    { const geo = KBGarage.pokerGeo, ch = KBGarage.seatSpot(i, geo.rx + (KBGarage.chairR || 0.5), geo.rz + (KBGarage.chairR || 0.5)); s.plate.position.set(ch.x - geo.x, 0, ch.z - geo.z).addScaledVector(new THREE.Vector3(-s.dir.z, 0, s.dir.x), 0.34); } s.plate.position.y = 0.5; s.plate.scale.set(0.42, 0.16, 1); // beside the player's head (to your right as you face them), not above it
     g.add(s.stack, s.bet, s.pend, s.plate);
     // the drop circle where you put chips you're about to bet
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.075, 0.085, 32), new THREE.MeshBasicMaterial({ color: 0xc9a13b, transparent: true, opacity: 0.55 }));
@@ -423,7 +423,9 @@ function seatGeom(i) {
   const S = T3.seats[i], geo = KBGarage.pokerGeo, floorY = -(geo.top + 0.0065);
   const e = (f, y) => new THREE.Vector3(S.dir.x * geo.rx * f, y, S.dir.z * geo.rz * f);
   const fwd = S.dir.clone().multiplyScalar(-1), right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-  return { eye: e(1.24, 0.46), fwd, hands: [-1, 1].map(sd => e(0.97, 0.035).addScaledVector(right, sd * 0.13)), floorY, seatY: floorY + 0.5 };
+  const ch = KBGarage.seatSpot(i, geo.rx + (KBGarage.chairR || 0.5), geo.rz + (KBGarage.chairR || 0.5)); // the chair: eyes just ahead of its cushion's middle
+  const eye = new THREE.Vector3(ch.x - geo.x, 0.46, ch.z - geo.z).addScaledVector(fwd, 0.06);
+  return { eye, fwd, hands: [-1, 1].map(sd => e(0.97, 0.035).addScaledVector(right, sd * 0.13)), floorY, seatY: floorY + 0.5 };
 }
 function seatPose(i) {
   if (!T3 || !T3.g.visible || i == null || i < 0) return null;

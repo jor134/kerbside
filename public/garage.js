@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 21;
+const GARAGE_BUILD = 22;
 
 /* ---------------- Materials ---------------- */
 const toon = (c, gloss) => KBMat({ color: c }, gloss);
@@ -211,7 +211,8 @@ function bake(G, keep) {
 /* ---------------- Casino look ---------------- */
 // Same garage, dressed for a night in Vegas: patterned carpet, burgundy walls, gold trim, neon, chandeliers,
 // slot machines and a poker table at the back. The host's choice applies to everyone in a hangout.
-const POKER = { x: -1.0, z: 3.0, top: 0.78, rx: 1.15, rz: 0.68 }; // poker table centre, felt height and size
+const POKER = { x: -1.0, z: 3.0, top: 0.78, rx: 0.68, rz: 1.15 }; // poker table centre, felt height and size: the long way runs front to back, so more chairs see the room screen
+const CHAIR_R = 0.5; // chairs sit this far beyond the felt's edge
 const CASINO = { inWall: 0x4a1420, inBack: 0x3a0f19, ceil: 0x1a0d10, glow: 0xffd27a, team: 0xc9a13b };
 const SAVED = { inWall: 0x353d43, inBack: 0x2a3136, ceil: 0x22282c, glow: 0xf4f6f8 };
 let look_ = 'team';
@@ -221,6 +222,23 @@ function neonText(text, color, w, h) {
     c.font = `800 ${Math.round(h * 0.62)}px "Barlow Condensed", sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle';
     for (const [blur, a] of [[h * 0.3, 0.55], [h * 0.12, 0.8], [0, 1]]) { c.shadowColor = color; c.shadowBlur = blur; c.globalAlpha = a; c.fillStyle = blur ? color : '#fff6fb'; c.fillText(text, w / 2, h / 2); }
   });
+}
+// the racing-seat model: positions, normals and baked colours, one mesh (read here: no loader needed)
+let seatModel = null;
+function loadSeat() {
+  if (!seatModel) seatModel = fetch('models/casino/seat.glb?v=1').then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); }).then(buf => {
+    const dv = new DataView(buf), jl = dv.getUint32(12, true), j = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jl))), bin = 20 + jl + 8;
+    const read = i => { const a = j.accessors[i], v = j.bufferViews[a.bufferView], o = bin + (v.byteOffset || 0), n = a.count * { SCALAR: 1, VEC3: 3 }[a.type];
+      const T = { 5126: Float32Array, 5125: Uint32Array, 5123: Uint16Array, 5121: Uint8Array }[a.componentType]; return new T(buf.slice(o, o + n * T.BYTES_PER_ELEMENT)); };
+    const p = j.meshes[0].primitives[0], geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(read(p.attributes.POSITION), 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(read(p.attributes.NORMAL), 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(read(p.attributes.COLOR_0), 3, true));
+    geo.setIndex(new THREE.BufferAttribute(read(p.indices), 1));
+    const mat = KBMat({ vertexColors: true }, 'satin'); mat.side = THREE.DoubleSide; // the source is double-sided
+    return { geo, mat, plinth: j.asset.extras.plinth };
+  }).catch(e => { window.KBLog && KBLog('seat model: ' + e.message); seatModel = null; return null; });
+  return seatModel;
 }
 function buildCasino() {
   const g = new THREE.Group(); g.name = 'casino'; g.visible = false;
@@ -272,17 +290,26 @@ function buildCasino() {
   ell(POKER.rx, POKER.rz, 0.02, POKER.top - 0.005, felt);
   const railT = new THREE.Mesh(new THREE.TorusGeometry(1, 0.06, 8, 48), black); railT.rotation.x = Math.PI / 2; railT.scale.set(POKER.rx + 0.1, POKER.rz + 0.1, 1); railT.position.set(POKER.x, POKER.top + 0.01, POKER.z); g.add(railT);
   const feltLine = new THREE.Mesh(new THREE.TorusGeometry(1, 0.006, 4, 48), gold); feltLine.rotation.x = Math.PI / 2; feltLine.scale.set(POKER.rx * 0.62, POKER.rz * 0.55, 1); feltLine.position.set(POKER.x, POKER.top + 0.006, POKER.z); g.add(feltLine);
+  // racing bucket seats (models/casino/seat.glb, tools/seat_model.py) in casino red and gold, on gold plinths;
+  // simple box chairs stand in until the model has loaded
+  const chairs = [];
   for (let i = 0; i < 6; i++) {
-    const s = seatSpot(i, 1.75, 1.25), ry = s.yaw;
+    const s = seatSpot(i, POKER.rx + CHAIR_R, POKER.rz + CHAIR_R), ry = s.yaw;
     const ch = new THREE.Group(); ch.position.set(s.x, 0, s.z); ch.rotation.y = ry; g.add(ch);
     box(ch, 0.48, 0.1, 0.46, 0, 0.48, 0, red); box(ch, 0.48, 0.55, 0.08, 0, 0.8, -0.23, red); box(ch, 0.5, 0.04, 0.5, 0, 0.42, 0, gold);
     for (const [dx, dz] of [[-0.2, -0.2], [0.2, -0.2], [-0.2, 0.2], [0.2, 0.2]]) box(ch, 0.04, 0.42, 0.04, dx, 0.21, dz, gold);
+    chairs.push(ch);
   }
+  loadSeat().then(m => { if (!m) return; for (const ch of chairs) {
+    while (ch.children.length) ch.remove(ch.children[0]);
+    ch.add(new THREE.Mesh(m.geo, m.mat));
+    const [x0, x1, z0, z1, h] = m.plinth; box(ch, x1 - x0 + 0.04, h, z1 - z0 + 0.04, (x0 + x1) / 2, h / 2, (z0 + z1) / 2, gold);
+  } }).catch(() => {});
   const anchor = new THREE.Group(); anchor.position.set(POKER.x, POKER.top + 0.0065, POKER.z); g.add(anchor); // poker.js puts cards and chips here, 1.5 mm above the felt's surface so nothing lying on it fights with it
   // glowing seats: point at one and click (or pinch) to sit there. Shown in the headset while you're standing.
   const markers = [];
   for (let i = 0; i < 6; i++) {
-    const s = seatSpot(i, 1.75, 1.25), m = new THREE.Group(); m.position.set(s.x, 0, s.z); g.add(m);
+    const s = seatSpot(i, POKER.rx + CHAIR_R, POKER.rz + CHAIR_R), m = new THREE.Group(); m.position.set(s.x, 0, s.z); g.add(m);
     const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.55, depthWrite: false });
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.36, 40), ringMat); ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; m.add(ring);
     const glow = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.9, 24, 1, true), new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide })); glow.position.y = 0.45; m.add(glow);
@@ -296,7 +323,7 @@ function buildCasino() {
 // Seat i around the poker table (0 nearest the circuit table, then clockwise seen from above), at
 // distance (rx, rz) from the centre, facing the middle of the table.
 function seatSpot(i, rx, rz) {
-  const a = Math.PI - i * Math.PI / 3, x = POKER.x + rx * Math.sin(a), z = POKER.z + rz * Math.cos(a); // clockwise: seat 1 is on seat 0's left
+  const a = Math.PI / 2 - i * Math.PI / 3, x = POKER.x + rx * Math.sin(a), z = POKER.z + rz * Math.cos(a); // clockwise: seat 1 is on seat 0's left
   return { x, z, yaw: Math.atan2(POKER.x - x, POKER.z - z) };
 }
 let hoverSeat = -1, seatT = 0;
@@ -608,7 +635,7 @@ function atPitwall() { return spot === PITWALL && App.env === 'garage'; }
 function seatAt(i, again) {
   if (i == null || i < 0) { if (spot && spot.seat != null) setSpot(null); return; }
   if (spot && spot.seat === i && !again) return; // already there: keep the same spot, so you aren't moved again
-  const f = seatSpot(i, POKER.rx + 0.42, POKER.rz + 0.42);
+  const f = seatSpot(i, POKER.rx + CHAIR_R - 0.06, POKER.rz + CHAIR_R - 0.06); // your eyes, just ahead of the chair's cushion
   setSpot({ pos: new THREE.Vector3(f.x, 0, f.z), yaw: f.yaw, eye: 1.25, pitch: -0.62, seat: i });
 }
 function flatCam(camera) { // flat screens: stand on the pitwall, or sit at the poker table, and look around
@@ -722,7 +749,7 @@ function sessionEnded() { win.placed = false; frozenYaw = null; lastAnchor.set(1
 
 window.KBGarage = { frame, startWindowPlacing, confirmWindow, canWindow, sessionEnded, setTeamColor, setAway, away, atPitwall, flatCam, lookBy, zoomBy, build: GARAGE_BUILD,
   setLook, look: () => look_, seatAt, seated: () => spot && spot.seat != null ? spot.seat : -1,
-  pokerAnchor: () => built && built.casino.anchor, pokerGeo: POKER, seatSpot, stencil: outsideWindow,
+  pokerAnchor: () => built && built.casino.anchor, pokerGeo: POKER, chairR: CHAIR_R, seatSpot, stencil: outsideWindow,
   roaming: () => !!(spot && spot.free && App.env === 'garage'), pickSeat, group: () => built && built.G, setLift, lift: () => lift, fitHeight, hoverSeat: () => (seatsShown() ? hoverSeat : -1),
   _dbg: () => ({ TR, built, SCR, OFF, look, spot, tp, tpMark }) };
 })();
