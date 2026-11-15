@@ -100,6 +100,7 @@ Surfaces have their own finish: car paint and helmets are glossy and mirror a sk
 
 ### In the headset
 
+- **Play poker.** The **♠ Play poker** button on the screen menu (and **♠ Poker** on the headset menu) does everything in one go: opens a room if you're not in one, takes you to the casino garage and opens the poker table, where you can sit with practice bots or invite friends.
 - **Room screen.** A cinema-sized screen on the garage's right wall, beside the car that everyone in a room sees and hears. Anyone in the room can put something on it from **Watch with friends**:
   - **Share a tab** (on a computer): pick a browser tab and tick *Share tab audio*; the picture and sound go to everyone over the room's voice connections, including friends who join later. Copy-protected sites (F1 TV, Netflix, Disney+) usually share as a black picture; that's the site's choice and can't be worked around. The Quest browser can't share its own screen.
   - **Play a link**: a direct video or live-stream address (ending in `.m3u8` or `.mp4`, not a web page). Everyone's app plays it itself, in step, at full quality. If the site doesn't allow other pages to play it, it goes through the Worker (`/vproxy`, relay key required, video and playlists only). Passing someone else's stream through your server may break that site's terms, so check before using it with a paid service.

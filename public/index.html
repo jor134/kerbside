@@ -178,6 +178,11 @@ body:not(.board-open) #board{display:none}
   </section>
 
   <section>
+    <button id="pokerBtn" class="primary">♠ Play poker</button>
+    <p class="hint">Takes you to the casino table. Play practice bots straight away, or invite friends to sit with you.</p>
+  </section>
+
+  <section>
     <button id="hangBtn" class="ghost">Watch with friends</button>
     <p class="hint">A shared room with voice chat. Everyone sees the same race, and friends appear around your table.</p>
   </section>
@@ -2435,10 +2440,16 @@ async function pokerFromHeadset() {
       if (App.env !== 'garage') setEnv('garage');
       await loadGarage(); setLook('casino');
     }
-    await window.KBLoadPoker(); KBPoker.openXR();
-    toast('The poker table is behind you in the casino. Pick a seat on the panel at the table.', 6000);
+    await window.KBLoadPoker();
+    if (renderer.xr.isPresenting) { KBPoker.openXR(); toast('The poker table is behind you in the casino. Pick a seat on the panel at the table.', 6000); }
+    else { KBPoker.open(); toast('You’re at the casino table. Pick a seat, then Practise with bots, or Invite friends.', 7000); }
   } catch (e) { toast('Poker: ' + (e.message || e) + '.', 7000); }
 }
+// "Play poker" on the screen menu: the same steps as the headset's Poker button (a room, the casino, the table)
+$('#pokerBtn').onclick = async () => {
+  const b = $('#pokerBtn'); b.disabled = true; b.textContent = 'Opening the casino…';
+  try { await pokerFromHeadset(); } finally { b.disabled = false; b.textContent = '♠ Play poker'; }
+};
 function inviteFromHeadset() { loadHang().then(() => KBHang.invite()).then(() => { App.uiDirty = true; }).catch(e => toast('Hangout: ' + e.message + '.', 7000)); }
 const wristFace = (label, icon) => [false, true].map(hot => {
   const cv = document.createElement('canvas'); cv.width = cv.height = 128; const c = cv.getContext('2d');
