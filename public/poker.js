@@ -5,7 +5,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, toast = KB.toast, renderer = KB.renderer;
-const POKER_BUILD = 18;
+const POKER_BUILD = 19;
 const SEATS = 6;
 const P = {
   state: null, bets: [], hole: null, hand: 0, mySeat: -1, bal: 0, rebuys: 0, top: null,
@@ -295,7 +295,7 @@ function openUI() { buildUI(); P.open = true; el.hidden = false; send({ t: 'pk',
 /* ---------------- The table in the casino garage ---------------- */
 // Real-size cards (6.3 x 8.8 cm) and chips lie on the felt; name plates float over each chair.
 const CW = 0.063, CH = 0.088;
-const cardTex = new Map();
+const cardTex = new Map(), cardCv = new Map(); // textures for the 3D cards, and the same drawings for the poker panel
 function cardTexture(code) {
   const key = code || 'back'; if (cardTex.has(key)) return cardTex.get(key);
   // drawn at four times the old size, with anisotropic filtering, so cards stay readable lying flat across the table
@@ -307,6 +307,7 @@ function cardTexture(code) {
     c.font = '700 54px "Barlow Condensed", sans-serif'; c.fillText(rankTxt(code[0]), 32, 38); c.font = '40px sans-serif'; c.fillText(SUIT[code[1]], 32, 84);
     c.font = '84px sans-serif'; c.fillText(SUIT[code[1]], 76, 124);
   }
+  cardCv.set(key, cv);
   const t = new THREE.CanvasTexture(cv); t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy ? renderer.capabilities.getMaxAnisotropy() : 1); cardTex.set(key, t); return t;
 }
 const cardGeo = new THREE.PlaneGeometry(CW, CH);
@@ -551,7 +552,7 @@ function updateBar(frame) {
     bar.mesh.rotation.set(-0.25, Math.atan2(-dx, -dz) + Math.PI, 0, 'YXZ');
   }
   const o = opts(), s = P.state, st = me(), now = Date.now();
-  const sig = JSON.stringify([P.barMode, KBGarage.lift && KBGarage.lift(), P.mySeat, s && s.seats.map(x => x && [x.name, x.stack]), P.xrTab, o, P.pending, P.raiseTo, st && st.sitOut, s && s.toAct, s && Math.round((s.deadline - now) / 1000), P.bets.map(m => [m.id, m.status, m.pool, Math.round((m.closes - now) / 1000)]), P.betPick, P.betAmt, P.hover, P.bal]);
+  const sig = JSON.stringify([P.hole, s && s.board, st && st.folded, P.barMode, KBGarage.lift && KBGarage.lift(), P.mySeat, s && s.seats.map(x => x && [x.name, x.stack]), P.xrTab, o, P.pending, P.raiseTo, st && st.sitOut, s && s.toAct, s && Math.round((s.deadline - now) / 1000), P.bets.map(m => [m.id, m.status, m.pool, Math.round((m.closes - now) / 1000)]), P.betPick, P.betAmt, P.hover, P.bal]);
   if (sig === bar.sig) return; bar.sig = sig;
   const c = bar.cv.getContext('2d'), W = 1024, H = BAR_H - BAR_HANDLE, hits = bar.hits = [];
   c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, W, BAR_H);
@@ -569,6 +570,10 @@ function updateBar(frame) {
   c.textAlign = 'left'; c.textBaseline = 'alphabetic';
   btn(24, 20, 150, 56, 'Table', () => P.xrTab = 'act', P.xrTab === 'act' ? 'go' : ''); btn(186, 20, 150, 56, 'Race bets', () => P.xrTab = 'bets', P.xrTab === 'bets' ? 'go' : '');
   c.textAlign = 'right'; c.font = '500 28px Barlow, sans-serif'; c.fillStyle = '#94A1A8'; c.fillText('Chips ' + fmt(P.bal), W - 28, 58); c.textAlign = 'left';
+  if (mine && P.hole && st && st.cards > 0 && !st.folded) { // your own two cards, and what they make with the board
+    P.hole.forEach((code, k) => { cardTexture(code); c.drawImage(cardCv.get(code), 352 + k * 58, 10, 52, 73); });
+    c.font = '600 28px "Barlow Condensed", sans-serif'; c.fillStyle = '#e8c33a'; c.fillText(handLabel([...P.hole, ...((s && s.board) || [])]), 476, 58, 330);
+  }
   if (P.xrTab === 'act' && !mine) { // the lobby: pick a seat
     c.font = '600 30px "Barlow Condensed", sans-serif'; c.fillStyle = '#E9E6DF';
     c.fillText(!s ? 'Connecting to the table…' : 'Pick a seat. A hand starts once two players are seated. Blinds 50/100.', 28, 124);
@@ -666,7 +671,7 @@ function readHands(frame) {
   const session = renderer.xr.getSession(), ref = renderer.xr.getReferenceSpace(), out = [];
   if (!session || !frame || !ref) return out;
   for (const src of session.inputSources) {
-    let pos = null, grab = false;
+    let pos = null, grab = false, padK = null;
     if (src.hand && frame.getJointPose) {
       const th = src.hand.get('thumb-tip'), ix = src.hand.get('index-finger-tip');
       const a = th && frame.getJointPose(th, ref), b = ix && frame.getJointPose(ix, ref);
@@ -676,11 +681,13 @@ function readHands(frame) {
         const prev = hands.get(src); grab = prev && prev.grab ? d < 0.04 : d < 0.022; // a little stickier once pinched
       }
     } else if (src.gripSpace) {
-      const g = frame.getPose(src.gripSpace, ref);
-      if (g) { const p = g.transform.position; pos = new THREE.Vector3(p.x, p.y, p.z); }
+      // a controller: the grip button picks things up, at the fingertips of the hand drawn round it
+      const J = KB.padJoints && KB.padJoints(src, frame, ref);
+      if (J) { pos = J.pinch.clone(); padK = [0, 6, 11, 16, 21].map(k => J.pts[k].clone()); }
+      else { const g = frame.getPose(src.gripSpace, ref); if (g) { const p = g.transform.position; pos = new THREE.Vector3(p.x, p.y, p.z); } }
       grab = !!(src.gamepad && src.gamepad.buttons[1] && src.gamepad.buttons[1].pressed);
     }
-    if (pos) out.push({ src, pos, grab, knuckles: src.hand ? knuckles(src, frame, ref) : null });
+    if (pos) out.push({ src, pos, grab, knuckles: src.hand ? knuckles(src, frame, ref) : padK });
   }
   return out;
 }
@@ -730,7 +737,7 @@ function handsFrame(dt, frame) {
           H.objs.forEach((c, i) => {
             const off = n === 2 ? (i - 0.5) * 0.034 : 0;
             const toEye = n === 2 ? i * 0.0015 / l : 0; /* the second card a hair nearer your eyes, so they don't flicker */
-            c.position.set(local.x + rx * off - dx * toEye, local.y, local.z + rz * off - dz * toEye);
+            c.position.set(local.x + rx * off - dx * toEye, local.y + CH * 0.42, local.z + rz * off - dz * toEye); /* held by the bottom edge, so your fingers don't cover the card */
             setCard(c, P.hole[c.userData.k], true);
             c.lookAt(T3.anchor.localToWorld(vT.copy(head)));
             if (n === 2) c.rotateZ((0.5 - i) * 0.22);
@@ -754,7 +761,7 @@ function handsFrame(dt, frame) {
 }
 /* Chip trick: hold a chip, turn your hand palm-down and keep it there a moment, and the chip walks across
    your knuckles, flipping from finger to finger and passing back underneath, like a card-room regular.
-   Turn your palm up, or pinch again, to stop. Hand tracking only (controllers have no fingers to roll over).
+   Turn your palm up, or pinch again, to stop. With a controller: hold the grip button to pick the chip up, palm down.
    Friends see it on your avatar's hand. */
 const tv1 = new THREE.Vector3(), tv2 = new THREE.Vector3(), tv3 = new THREE.Vector3(), tq1 = new THREE.Quaternion(), tq2 = new THREE.Quaternion(), Y_AXIS = new THREE.Vector3(0, 1, 0);
 function backOfHand(K, left) { // unit normal out of the back of the hand, from wrist, index and pinky knuckles

@@ -1031,7 +1031,7 @@ function setDrawTrack(on) {
 function applyScenery() { if (scenery) scenery.model.visible = scenery.real.visible = App.scenery; }
 App.env = store.get('env', 'passthrough'); App.garageLook = store.get('garageLook', 'team'); App.ptWindow = store.get('ptWindow', false); App.ptSize = store.get('ptSize', 'M');
 let garageLoading = null;
-const GARAGE_VER = '24';
+const GARAGE_VER = '25';
 function loadGarage() {
   if (window.KBGarage) return Promise.resolve();
   return garageLoading || (garageLoading = new Promise((res, rej) => {
@@ -2212,6 +2212,7 @@ const controllers = [0, 1].map(i => {
   line.scale.z = 2; c.add(line); c.userData.line = line;
   c.addEventListener('select', onSelect);
   c.addEventListener('selectstart', dragStart); c.addEventListener('selectend', dragEnd);
+  c.addEventListener('connected', e => { c.userData.src = e.data; }); c.addEventListener('disconnected', () => { c.userData.src = null; }); /* which hand or controller this is (thumbsticks, buttons) */
   scene.add(c); return c;
 });
 /* Drag to move: pinch (or pull the trigger) on the menu's title strip, or the strip along the top of the
@@ -2506,17 +2507,53 @@ const jointGeo = new THREE.SphereGeometry(1, 10, 8), boneGeo = new THREE.Cylinde
 // WebXR's 25 hand joints: 0 wrist, then thumb (4), index, middle, ring and little finger (5 each)
 const BONES = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [8, 9], [0, 10], [10, 11], [11, 12], [12, 13], [13, 14], [0, 15], [15, 16], [16, 17], [17, 18], [18, 19], [0, 20], [20, 21], [21, 22], [22, 23], [23, 24], [1, 5], [5, 10], [10, 15], [15, 20], [6, 11], [11, 16], [16, 21]];
 const handRigs = [0, 1].map(() => {
-  const g = new THREE.Group(), tracked = new THREE.Group(), glove = new THREE.Group(); g.visible = false; g.add(tracked, glove); scene.add(g);
+  const g = new THREE.Group(), tracked = new THREE.Group(); g.visible = false; g.add(tracked); scene.add(g);
   const joints = [], bones = [], pts = [], rad = [];
   for (let i = 0; i < 25; i++) { const m = new THREE.Mesh(jointGeo, i === 0 ? gloveDark : gloveMat); tracked.add(m); joints.push(m); pts.push(new THREE.Vector3()); rad.push(0.008); }
   for (let i = 0; i < BONES.length; i++) { const m = new THREE.Mesh(boneGeo, gloveMat); tracked.add(m); bones.push(m); }
-  // holding a controller: a simple closed glove around the grip
-  const part = (w, h, d, x, y, z, mat) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat || gloveMat); m.position.set(x, y, z); glove.add(m); return m; };
-  part(0.085, 0.045, 0.1, 0, 0, 0.01); part(0.08, 0.04, 0.045, 0, -0.03, -0.045); part(0.09, 0.05, 0.03, 0, 0, 0.075, gloveDark);
-  const thumb = part(0.025, 0.03, 0.07, 0.05, 0.01, -0.01);
-  return { g, tracked, glove, joints, bones, pts, rad, thumb };
+  return { g, tracked, joints, bones, pts, rad };
 });
-const _bv = new THREE.Vector3(), _bq = new THREE.Quaternion(), _bp = new THREE.Vector3();
+/* Holding a controller: the same jointed glove a tracked hand gets, with its 25 joints worked out from where
+   the controller's grip is. The fingers rest wrapped round the handle; the index finger and thumb close into a
+   pinch as you pull the trigger or squeeze the grip, and the other fingers tighten with the grip button.
+   The hand is laid out in its own frame (a: wrist to fingers, b: little finger to thumb side, n: out of the back
+   of the hand), then placed in WebXR's grip space: back of the right hand towards +x (left: -x), thumb end of
+   the handle towards -z, wrist back along +z and +y. */
+const PADHAND = (() => {
+  const A = new THREE.Vector3(0, -0.55, -0.83).normalize(), Bv = new THREE.Vector3(0, 0.83, -0.55).normalize(), C = [0.07, 0, -0.03]; // C: the middle of the grip, in the hand's frame
+  const F = [ // each finger: base near the wrist [a, b], knuckle [a, b], bone lengths, curl per joint at rest and squeezed (degrees)
+    { m: [0.025, 0.015], k: [0.092, 0.026], L: [0.042, 0.025, 0.022], rest: [20, 25, 15], shut: [55, 50, 35] },
+    { m: [0.027, 0.004], k: [0.090, 0.005], L: [0.046, 0.029, 0.023], rest: [48, 55, 35], shut: [68, 80, 50] },
+    { m: [0.026, -0.007], k: [0.084, -0.014], L: [0.042, 0.027, 0.022], rest: [50, 55, 35], shut: [70, 80, 50] },
+    { m: [0.024, -0.018], k: [0.075, -0.031], L: [0.032, 0.019, 0.020], rest: [52, 55, 35], shut: [72, 80, 50] }];
+  const THUMB = { rest: [[0.02, 0.028, -0.008], [0.05, 0.052, -0.016], [0.078, 0.056, -0.022], [0.1, 0.05, -0.03]], shut: [[0.02, 0.028, -0.008], [0.048, 0.05, -0.03], [0.074, 0.045, -0.05], [0.092, 0.032, -0.064]] };
+  const RAD = [0.02, 0.011, 0.0105, 0.0095, 0.0085, ...[0, 1, 2, 3].flatMap(f => [0.0095, 0.0095 - f * 0.0004, 0.0085 - f * 0.0004, 0.0078 - f * 0.0004, 0.007 - f * 0.0004])];
+  const cache = { left: null, right: null }, q = new THREE.Quaternion(), o = new THREE.Vector3();
+  const mk = () => ({ pts: Array.from({ length: 25 }, () => new THREE.Vector3()), pinch: new THREE.Vector3(), n: new THREE.Vector3(), rad: RAD });
+  function joints(src, frame, ref) {
+    if (!src || !src.gripSpace || !frame) return null;
+    const pose = frame.getPose(src.gripSpace, ref); if (!pose) return null;
+    const side = src.handedness === 'left' ? 'left' : 'right', sx = side === 'left' ? -1 : 1, H = cache[side] || (cache[side] = mk());
+    const b = src.gamepad && src.gamepad.buttons, val = i => (b && b[i] ? Math.max(b[i].value || 0, b[i].pressed ? 1 : 0) : 0);
+    const trig = val(0), sq = val(1), pin = Math.max(trig, sq);
+    const tp = pose.transform.position, tq = pose.transform.orientation; q.set(tq.x, tq.y, tq.z, tq.w); o.set(tp.x, tp.y, tp.z);
+    const put = (v, a, bb, n) => { a -= C[0]; bb -= C[1]; n -= C[2]; return v.set(sx * n, a * A.y + bb * Bv.y, a * A.z + bb * Bv.z).applyQuaternion(q).add(o); };
+    put(H.pts[0], 0, 0, 0);
+    for (let k = 0; k < 4; k++) { const r = THUMB.rest[k], s2 = THUMB.shut[k]; put(H.pts[1 + k], r[0] + (s2[0] - r[0]) * pin, r[1] + (s2[1] - r[1]) * pin, r[2] + (s2[2] - r[2]) * pin); }
+    F.forEach((f, i) => {
+      const base = 5 + i * 5, t = i === 0 ? pin : sq;
+      put(H.pts[base], f.m[0], f.m[1], 0.002); put(H.pts[base + 1], f.k[0], f.k[1], 0.004);
+      let a = f.k[0], n = 0.004, th = 0;
+      for (let k = 0; k < 3; k++) { th += (f.rest[k] + (f.shut[k] - f.rest[k]) * t) * Math.PI / 180; a += Math.cos(th) * f.L[k]; n -= Math.sin(th) * f.L[k]; put(H.pts[base + 2 + k], a, f.k[1], n); }
+    });
+    put(H.pinch, 0.098, 0.029, -0.068); // where the index finger and thumb meet: what you pick things up with
+    H.n.set(sx, 0, 0).applyQuaternion(q); // out of the back of the hand
+    return H;
+  }
+  return { joints };
+})();
+function padJoints(src, frame, ref) { return PADHAND.joints(src, frame, ref || renderer.xr.getReferenceSpace()); }
+const _bv = new THREE.Vector3(), _bq = new THREE.Quaternion(), _bp = new THREE.Vector3(); const _bw = [new THREE.Vector3(), new THREE.Vector3()];
 function drawTrackedHand(rig, hand, frame, ref) {
   let k = 0;
   for (const joint of hand.values()) {
@@ -2526,13 +2563,20 @@ function drawTrackedHand(rig, hand, frame, ref) {
     rig.pts[k].set(p.x, p.y, p.z); rig.rad[k] = r; rig.joints[k].position.copy(rig.pts[k]); rig.joints[k].scale.setScalar(k === 0 ? 0.02 : r * 1.05); k++;
   }
   if (k < 25) { rig.g.visible = false; return; }
+  drawRig(rig);
+}
+function drawPadHand(rig, J) { // a controller's worked-out hand, drawn the same way
+  for (let k = 0; k < 25; k++) { rig.pts[k].copy(J.pts[k]); rig.rad[k] = J.rad[k]; rig.joints[k].position.copy(J.pts[k]); rig.joints[k].scale.setScalar(k === 0 ? 0.02 : J.rad[k] * 1.05); }
+  drawRig(rig);
+}
+function drawRig(rig) {
   BONES.forEach(([a, b], n) => {
     const m = rig.bones[n], A = rig.pts[a], B = rig.pts[b]; _bv.copy(B).sub(A); const len = _bv.length();
     if (len < 1e-4) { m.visible = false; return; }
     m.visible = true; m.position.copy(A).addScaledVector(_bv, 0.5); m.quaternion.setFromUnitVectors(UPV, _bv.multiplyScalar(1 / len));
     const r = Math.min(rig.rad[a], rig.rad[b]) * (n >= 24 || a === 0 ? 1.25 : 1); m.scale.set(r, len, r);
   });
-  rig.g.visible = true; rig.tracked.visible = true; rig.glove.visible = false;
+  rig.g.visible = true;
 }
 function xrBodyTick(frame, dt) {
   const xr = renderer.xr.isPresenting, now = performance.now(), driving = !!(window.KBDrive && KBDrive.active);
@@ -2549,19 +2593,21 @@ function xrBodyTick(frame, dt) {
     const side = src.handedness;
     if (src.hand && frame.getJointPose) {
       const wj = src.hand.get('wrist'), wp = wj && frame.getJointPose(wj, ref);
-      if (side === 'left' && wp) left = { t: wp.transform, up: 0.035, back: 0.035 };
-      if (side === 'right' && wp) right = { t: wp.transform, up: 0.035, back: 0.035 };
+      if (wp && (side === 'left' || side === 'right')) { // the wrist buttons sit on the back of each wrist
+        const p = wp.transform.position, q = wp.transform.orientation, spot = _bw[side === 'left' ? 0 : 1]; _bq.set(q.x, q.y, q.z, q.w);
+        spot.set(p.x, p.y, p.z).addScaledVector(_bv.set(0, 1, 0).applyQuaternion(_bq), 0.035).addScaledVector(_bv.set(0, 0, 1).applyQuaternion(_bq), 0.035);
+        if (side === 'left') left = spot; else right = spot;
+      }
       const tj = src.hand.get('index-finger-tip'), tp = tj && frame.getJointPose(tj, ref);
       if (tp && side === 'right') poke = tp.transform.position; else if (tp && side === 'left') pokeL = tp.transform.position;
       if (showHands && n < 2 && src.hand.values) drawTrackedHand(handRigs[n++], src.hand, frame, ref);
-    } else if (src.gripSpace) {
-      const gp = frame.getPose(src.gripSpace, ref); if (!gp) continue;
-      if (side === 'left') left = { t: gp.transform, up: 0.035, back: 0.11 }; else if (side === 'right') right = { t: gp.transform, up: 0.035, back: 0.11 };
-      if (showHands && n < 2) {
-        const rig = handRigs[n++], p = gp.transform.position, q = gp.transform.orientation;
-        rig.glove.position.set(p.x, p.y, p.z); rig.glove.quaternion.set(q.x, q.y, q.z, q.w); rig.thumb.position.x = side === 'left' ? 0.05 : -0.05;
-        rig.g.visible = true; rig.glove.visible = true; rig.tracked.visible = false;
+    } else if (src.gripSpace) { // a controller: the same hand, worked out from the grip, with the same wrist buttons and fingertip
+      const J = padJoints(src, frame, ref); if (!J) continue;
+      if (side === 'left' || side === 'right') {
+        const spot = _bw[side === 'left' ? 0 : 1].copy(J.pts[0]).addScaledVector(J.n, 0.034);
+        if (side === 'left') { left = spot; pokeL = J.pts[9]; } else { right = spot; poke = J.pts[9]; }
       }
+      if (showHands && n < 2) drawPadHand(handRigs[n++], J);
     }
   }
   for (; n < 2; n++) handRigs[n].g.visible = false;
@@ -2570,8 +2616,7 @@ function xrBodyTick(frame, dt) {
   // reset button: back of your right wrist, pressed with your left index finger (or point and click)
   resetBtn.visible = !!right;
   if (right) {
-    const p = right.t.position, q = right.t.orientation; _bq.set(q.x, q.y, q.z, q.w);
-    resetBtn.position.set(p.x, p.y, p.z).addScaledVector(_bv.set(0, 1, 0).applyQuaternion(_bq), right.up).addScaledVector(_bv.set(0, 0, 1).applyQuaternion(_bq), right.back);
+    resetBtn.position.copy(right);
     resetBtn.lookAt(head);
     const dr = pokeL ? Math.hypot(pokeL.x - resetBtn.position.x, pokeL.y - resetBtn.position.y, pokeL.z - resetBtn.position.z) : 9;
     if (dr < 0.03 && resetArmed && now - resetAt > 1200) { resetArmed = false; resetAt = now; resetView(); }
@@ -2581,12 +2626,11 @@ function xrBodyTick(frame, dt) {
   wristBtn.visible = !driving;
   if (!wristBtn.visible) return;
   if (left) {
-    const p = left.t.position, q = left.t.orientation; _bq.set(q.x, q.y, q.z, q.w);
-    wristBtn.position.set(p.x, p.y, p.z).addScaledVector(_bv.set(0, 1, 0).applyQuaternion(_bq), left.up).addScaledVector(_bv.set(0, 0, 1).applyQuaternion(_bq), left.back);
+    wristBtn.position.copy(left);
   } else if (App.menuHidden) { const f = xrForward(); wristBtn.position.copy(head).addScaledVector(f, 0.5); wristBtn.position.y = head.y - 0.42; }
   else { wristBtn.visible = false; return; }
   wristBtn.lookAt(head);
-  // touching it with your right index finger presses it (hand tracking); with controllers, point and click
+  // touching it with your right index finger presses it (a controller's worked-out fingertip counts too), or point and click
   const d = poke && left ? Math.hypot(poke.x - wristBtn.position.x, poke.y - wristBtn.position.y, poke.z - wristBtn.position.z) : 9;
   if (d < 0.03 && wristArmed && now - wristAt > 700) { wristArmed = false; wristAt = now; setMenuHidden(!App.menuHidden); }
   else if (d > 0.07) wristArmed = true;
@@ -2882,13 +2926,13 @@ window.KB = {
   CarGeo, darkMat, CAR_LEN, labelSprite, modelCarLen, Cars, Replay, Live, orbit, flatCamTick,
   Track, setTrack, cacheTrack, cachedTrack, sharedTrack, packTrack, outlineFromSession, relayInfo,
   layoutModel, rebuildModelTrack, positionPanels, xrHead, xrForward, enterXR, placementTick, placeAtReticle,
-  pokerFromHeadset, inviteFromHeadset, uiMesh, chaseMesh, controllers, applyTrackVis, showSource, setEnv, setLook, setGhostPost, rayFrom, raycaster, drawXRPanel, getSessions: () => sessions
+  pokerFromHeadset, inviteFromHeadset, padJoints, uiMesh, chaseMesh, controllers, applyTrackVis, showSource, setEnv, setLook, setGhostPost, rayFrom, raycaster, drawXRPanel, getSessions: () => sessions
 };
 const DRIVER_VER = '3';
 window.KBLoadDriver = () => { // the racing-driver avatar model, loaded the first time someone needs one
   if (window.__kbDriverTag) return; const sc = document.createElement('script'); sc.src = 'driver.js?v=' + DRIVER_VER; sc.async = true; document.head.appendChild(sc); window.__kbDriverTag = sc;
 };
-const TUT_VER = '2', SCREEN_VER = '7';
+const TUT_VER = '3', SCREEN_VER = '7';
 (function loadTutorial() { // first-visit intro and the headset tour; the room screen in the garage
   const sc = document.createElement('script'); sc.src = 'tutorial.js?v=' + TUT_VER; sc.async = true; document.head.appendChild(sc);
   const s2 = document.createElement('script'); s2.src = 'screen.js?v=' + SCREEN_VER; s2.async = true; document.head.appendChild(s2);
@@ -2914,7 +2958,7 @@ $('#ptWinChk').onchange = e => setPtWindow(e.target.checked);
 refreshEnvUI();
 if (App.env === 'garage') loadGarage().catch(() => {});
 const HANG_VER = '20';
-const POKER_VER = '20';
+const POKER_VER = '21';
 let pokerLoading = null;
 window.KBLoadPoker = function loadPoker() { // poker and race bets, for people in a hangout
   if (window.KBPoker) return Promise.resolve();

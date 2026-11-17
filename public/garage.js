@@ -8,7 +8,7 @@
 (function () {
 'use strict';
 const KB = window.KB, THREE = KB.THREE, App = KB.App, renderer = KB.renderer, scene = KB.scene;
-const GARAGE_BUILD = 24;
+const GARAGE_BUILD = 25;
 
 /* ---------------- Materials ---------------- */
 const toon = (c, gloss) => KBMat({ color: c }, gloss);
@@ -616,7 +616,7 @@ function setAway(on) { setSpot(on ? PITWALL : null); }
 // Walking around: pinch and hold (or hold the trigger) while pointing at the floor. A ring shows where
 // you'll land; let go to jump there. Works in your garage and along the pit lane, not at the poker table
 // while you're seated. A quick pinch still just clicks.
-const tp = { src: null, t0: 0, ok: false, pt: new THREE.Vector3() };
+const tp = { src: null, t0: 0, ok: false, stick: false, pt: new THREE.Vector3() };
 const tpMark = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.27, 40), new THREE.MeshBasicMaterial({ color: 0x3ff4ff, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthTest: false }));
 tpMark.rotation.x = -Math.PI / 2; tpMark.visible = false; tpMark.renderOrder = 25;
 const tpDot = new THREE.Mesh(new THREE.CircleGeometry(0.06, 20), tpMark.material); tpDot.position.z = 0.001; tpMark.add(tpDot);
@@ -632,17 +632,32 @@ function allowedFloor(x, z) {
   if (Math.abs(x) < W / 2 - 0.35 && z > Dfront && z < Dback - 0.35) return true; // inside your garage
   return z <= Dfront && z > Z.wall + 0.6 && Math.abs(x) < 40; // the pit lane, 40 m either way
 }
+function tpRelease(c) {
+  if (tp.src !== c) return;
+  const go = tp.ok && canTeleport() && !onMenu(c); tp.src = null; tp.ok = false; tp.stick = false; tpMark.visible = false;
+  if (go) { setSpot({ pos: tp.pt.clone(), yaw: null, eye: 1.62, pitch: -0.14, free: true }); window.KBTutEv && KBTutEv('teleport'); }
+}
 for (const c of KB.controllers) {
-  c.addEventListener('selectstart', () => { if (canTeleport() && !onMenu(c)) { tp.src = c; tp.t0 = performance.now(); tp.ok = false; } });
-  c.addEventListener('selectend', () => {
-    if (tp.src !== c) return;
-    const go = tp.ok && canTeleport() && !onMenu(c); tp.src = null; tp.ok = false; tpMark.visible = false;
-    if (go) { setSpot({ pos: tp.pt.clone(), yaw: null, eye: 1.62, pitch: -0.14, free: true }); window.KBTutEv && KBTutEv('teleport'); }
-  });
+  c.addEventListener('selectstart', () => { if (canTeleport() && !onMenu(c)) { tp.src = c; tp.t0 = performance.now(); tp.ok = false; tp.stick = false; } });
+  c.addEventListener('selectend', () => { if (!tp.stick) tpRelease(c); });
+}
+// Controllers can also teleport the usual way: push a thumbstick forward to aim, let it go to jump.
+// (Not while Thumbsticks is switched on in the menu: the sticks then turn and resize the table.)
+const stickY = c => { const gp = c.userData.src && !c.userData.src.hand && c.userData.src.gamepad; return gp && gp.axes.length >= 4 ? gp.axes[3] : 0; };
+let padHinted = false;
+function teleportStick() {
+  if (tp.src && tp.stick) { if (stickY(tp.src) > -0.35) tpRelease(tp.src); return; }
+  if (tp.src || App.sticks || !canTeleport()) return;
+  for (const c of KB.controllers) {
+    const src = c.userData.src; if (!src || src.hand || !src.gamepad) continue;
+    if (!padHinted) { padHinted = true; KB.toast('Controllers: push a thumbstick forward (or hold the trigger), aim at the floor and let go to teleport. The grip button picks up cards and chips.', 9000); }
+    if (stickY(c) < -0.7) { tp.src = c; tp.stick = true; tp.t0 = performance.now() - 400; tp.ok = false; return; }
+  }
 }
 function teleportAim() {
+  teleportStick();
   if (!tp.src) return;
-  if (!canTeleport()) { tp.src = null; tp.ok = false; tpMark.visible = false; return; }
+  if (!canTeleport()) { tp.src = null; tp.ok = false; tp.stick = false; tpMark.visible = false; return; }
   if (!tpMark.parent) built.G.add(tpMark);
   tp.ok = false;
   if (performance.now() - tp.t0 > 350) { // held long enough to mean it

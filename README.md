@@ -117,6 +117,8 @@ Surfaces have their own finish: car paint and helmets are glossy and mirror a sk
 - **Load a race** at the bottom of the headset menu lists finished sessions by year (the same list as the page); pick one to load it. **Go live** connects to the live timing.
 - **Drive this circuit** opens drive mode without leaving the headset. Choose Time trial, AI race or **Race friends** on the drive menu. In a hangout with friends the button reads **Race friends here**: it sets up a race on your circuit and brings everyone in the hangout straight into it (on the page, Race friends → Create room does the same). You host and press Start. A friend who's in the middle of their own race gets a message instead.
 - **Your hands** appear as gloves in the pit garage and casino. In your own room you see your real ones.
+- **Controllers** get the same jointed glove hands as hand tracking (worked out from where the controller is; the index finger and thumb pinch as you pull the trigger or squeeze the grip) and the same features: the **grip button** picks up cards and chips at your fingertips, a tap on the felt knocks, the chip trick works (hold a chip palm-down), and touching a wrist button with the other hand's fingertip presses it. **Teleport:** push a thumbstick forward (or hold the trigger), aim at the floor and let go. Stick teleport is off while **Thumbsticks** is switched on in the menu, because the sticks then turn and resize the table.
+- **Your cards on the poker panel:** the panel's top row shows your two cards and what they make with the board (for example "Pair of Kings"). Cards you pick up are held by their bottom edge so fingers don't cover them.
 - Messages that appear as pop-ups on the page are shown on a small card in front of you.
 
 ### Casino and poker

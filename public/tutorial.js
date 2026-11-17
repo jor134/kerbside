@@ -51,7 +51,7 @@
         'This also opens your own private room that friends can join later.'],
       action: { label: 'Take me there', fn: () => KB.pokerFromHeadset() }, need: inCasino },
     { title: 'Get around', body: () => [
-        'Walk around for real, or teleport: point at the floor, ' + (usingHands() ? 'pinch and hold' : 'hold the trigger') + ' for half a second, aim the ring, then let go.',
+        'Walk around for real, or teleport: point at the floor, ' + (usingHands() ? 'pinch and hold for half a second' : 'push a thumbstick forward (or hold the trigger)') + ', aim the ring, then let go.',
         'Try teleporting next to the poker table.'], need: () => n('teleport') > 0 || seated(), skip: () => seated() || !inCasino() },
     { title: 'Sit down to play', body: () => [
         'The chairs at the poker table glow. Point at one and ' + pinch() + ' to sit.',
@@ -72,7 +72,7 @@
       need: () => n('act') > 0 },
     { title: 'Show off', body: () => [
         'Pick up a chip, turn your hand palm-down and hold still for a moment: it rolls across your knuckles. Turn your palm up to stop. Friends see it too.',
-        usingHands() ? 'Give it a try, or Skip step.' : 'This needs hand tracking: put the controllers down to try it, or Skip step.'],
+        usingHands() ? 'Give it a try, or Skip step.' : 'With a controller: hold the grip button to pick up a chip and turn your hand palm-down. Or Skip step.'],
       need: () => n('trick') > 0 },
     { title: 'Play with friends', body: () => [
         'Your room has a four-letter code, shown next to Invite on the menu. Pinch Invite to copy a link to send, or just tell friends the code: on their headset, phone or computer they choose Watch with friends and enter it, then pick a glowing chair.',
